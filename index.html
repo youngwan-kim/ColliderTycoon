@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Particle Clicker</title>
+  <meta name="description" content="An idle game: build CERN's accelerator chain and a CMS-like detector, and find the Higgs.">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="page1">
+    <div class="p1-row">
+      <span class="p1-name">Particle Clicker</span>
+      <span class="p1-year" id="year">1950</span>
+      <span class="p1-run" id="runstate">Run 1</span>
+      <span class="mode" id="beamMode"><i class="led"></i><span id="beamModeText">Cosmics</span></span>
+    </div>
+    <dl class="readout" id="stats">
+      <div tabindex="0"><dt>Data</dt><dd id="sData">0</dd><dd class="rate" id="sDataR">0/s</dd><div class="rd-tip" id="tData"></div></div>
+      <div tabindex="0"><dt>Funding</dt><dd id="sFunds">0</dd><dd class="rate" id="sFundsR">0/s</dd><div class="rd-tip" id="tFunds"></div></div>
+      <div tabindex="0"><dt>Reputation</dt><dd id="sRep">0</dd><dd class="rate" id="sRepR">funding ×1</dd><div class="rd-tip" id="tRep"></div></div>
+      <div tabindex="0"><dt>Collision energy</dt><dd id="sEnergy">—</dd><dd class="rate" id="sMachines">B = 0 T</dd><div class="rd-tip" id="tEnergy"></div></div>
+      <div tabindex="0"><dt>Discoveries</dt><dd id="sDisc">0</dd><dd class="rate" id="sNobel">1 analysis slot</dd><div class="rd-tip" id="tDisc"></div></div>
+    </dl>
+    <button class="theme" id="themeBtn" type="button" aria-label="Switch light or dark console">Light</button>
+  </header>
+
+  <ol class="elog" id="toasts" aria-live="polite" title="Click to open the logbook"></ol>
+
+  <main class="console">
+    <section class="overview" id="overview" aria-label="Laboratory overview">
+      <figure class="ov-cell ov-map" tabindex="0">
+        <div class="ov-box"><canvas id="complexMap" aria-label="Accelerator complex map. Click a ring to find it in the tech tree."></canvas></div>
+        <section class="beam-ops" id="beamOps" aria-label="Beam operations">
+          <div class="bo-h" id="boHead"></div>
+          <canvas class="ctrl-room" id="ctrlCCC" aria-label="The accelerator control room. Click to open it."></canvas>
+        </section>
+        <div class="card ring-card" id="ringCard" hidden></div>
+      </figure>
+      <figure class="ov-cell ov-det" tabindex="0">
+        <div class="lens" id="detectorWrap">
+          <canvas id="display" aria-label="Detector and event display. Click to record events."></canvas>
+          <span class="hint" id="detHint">Click to record events</span>
+        </div>
+        <div class="pop" id="detPop" role="dialog" aria-label="Detector subsystems"><b>Subsystems</b><button class="pop-x" type="button" data-pop="detPop" aria-label="Close">✕</button><ul class="legend" id="detLegend"></ul></div>
+        <div class="card" id="cardDet">
+          <b id="detLabel">Cosmic-ray test stand</b><button class="info-btn" type="button" data-pop="detPop" aria-expanded="false">ⓘ subsystems</button><span class="tip-y" id="detSite">surface hall</span>
+          <p class="ev-info" id="evInfo"></p>
+        </div>
+      </figure>
+      <figure class="ov-cell ov-comp" tabindex="0">
+        <canvas class="ctrl-room" id="ctrlDCR" aria-label="The detector control room. Click to open it."></canvas>
+        <div class="lens small room"><canvas id="computing" aria-label="Computing centre above, data storage below. Click the storage to manage it."></canvas>
+          <div class="room-tag"><b id="compSite">Counting room</b><button class="info-btn i-only" type="button" data-pop="chainPop" aria-expanded="false" aria-label="Data chain" title="Data chain">ⓘ</button></div>
+        </div>
+        <div class="pop chain-pop" id="chainPop" role="dialog" aria-label="Data chain"><button class="pop-x" type="button" data-pop="chainPop" aria-label="Close">✕</button><ul class="legend" id="compLegend"></ul><section class="block" id="chain" aria-label="Data chain"></section></div>
+      </figure>
+      <figure class="ov-cell ov-rooms" tabindex="0">
+        <div class="rooms"><canvas id="rooms" aria-label="The analysis room and, through the door, the conference room. Click a table for its plot, the paper station for the papers."></canvas>
+          <div class="conf-box rooms-conf" id="confBox" aria-label="Conference"></div></div>
+      </figure>
+      </figure>
+      </div>
+      <canvas class="ov-links" id="ovLinks" aria-hidden="true"></canvas>
+    </section>
+  </main>
+
+  <nav class="launcher" id="launcher" aria-label="Windows">
+    <div class="launch-tabs" id="tabs"></div>
+    <div class="chips">
+      <div class="ls-chip" id="lsChip"></div>
+    </div>
+  </nav>
+
+  <div class="windows" id="windows">
+    <section class="win" data-win="upgrades" aria-label="Upgrades" hidden>
+      <header class="win-h"><span>Upgrades</span><span class="win-sub">machines · beam technology · detector · trigger · computing · storage</span><button class="win-x" type="button" aria-label="Close">✕</button></header>
+      <div class="win-b win-tree">
+        <div class="tree-shell">
+          <div class="tree-lanes" id="treeLanes"></div>
+          <div class="tree-wrap" id="treeWrap"></div>
+          <aside class="tree-side">
+            <section class="block" id="lsPanel" aria-label="Long Shutdown"></section>
+            <label class="toggle tree-opt"><input type="checkbox" id="hideDone"> hide completed columns <span id="hideCount"></span></label>
+            <div class="tree-detail" id="treeDetail"></div>
+          </aside>
+        </div>
+      </div>
+    </section>
+    <section class="win" data-win="analyses" aria-label="Analyses" hidden>
+      <header class="win-h"><span>Analyses</span>
+        <span class="seg" role="tablist" aria-label="Section">
+          <button type="button" role="tab" data-act="anapane" data-id="analyses" aria-selected="true">Analyses</button>
+          <button type="button" role="tab" data-act="anapane" data-id="papers" aria-selected="false">Papers</button>
+        </span>
+        <span class="win-sub" id="anaWinSub">click a row to see its plot</span><button class="win-x" type="button" aria-label="Close">✕</button></header>
+      <div class="win-b">
+        <div class="physics" id="paneAna">
+          <section class="block" id="analyses"></section>
+          <figure class="plot"><canvas id="plot" aria-label="Analysis histogram"></canvas></figure>
+        </div>
+        <div id="wPubs" hidden></div>
+      </div>
+    </section>
+    <section class="win" data-win="staff" aria-label="Staff" hidden>
+      <header class="win-h"><span>Staff</span><span class="win-sub">shift-click hires 10</span><button class="win-x" type="button" aria-label="Close">✕</button></header>
+      <div class="win-b" id="wStaff"></div>
+    </section>
+    <section class="win" data-win="log" aria-label="Logbook" hidden>
+      <header class="win-h"><span>Logbook</span><span class="win-sub">latest first</span><button class="win-x" type="button" aria-label="Close">✕</button></header>
+      <div class="win-b" id="wLog"></div>
+    </section>
+    <section class="win" data-win="lab" aria-label="Lab" hidden>
+      <header class="win-h"><span>Lab</span><span class="win-sub"></span><button class="win-x" type="button" aria-label="Close">✕</button></header>
+      <div class="win-b" id="wLab"></div>
+    </section>
+    <section class="win" data-win="ccc" aria-label="Accelerator control room" hidden>
+      <header class="win-h"><span>Accelerator control room</span><span class="win-sub">fills · machines · faults</span><button class="win-x" type="button" aria-label="Close">✕</button></header>
+      <div class="win-b cr">
+        <div class="bo-h" id="cccStatus"></div>
+        <canvas id="lumiChart" aria-label="Luminosity over the last 30 minutes, relative to nominal" hidden></canvas>
+        <div id="cccBody"></div>
+      </div>
+    </section>
+    <section class="win" data-win="confs" aria-label="Conferences" hidden>
+      <header class="win-h"><span>Conferences</span><span class="win-sub">the lab’s archive · group photos</span><button class="win-x" type="button" aria-label="Close">✕</button></header>
+      <div class="win-b cr" id="confBody"></div>
+    </section>
+    <section class="win" data-win="storage" aria-label="Storage" hidden>
+      <header class="win-h"><span>Storage</span><span class="win-sub">disk · tape · capacity</span><button class="win-x" type="button" aria-label="Close">✕</button></header>
+      <div class="win-b cr" id="storeBody"></div>
+    </section>
+    <section class="win" data-win="dcr" aria-label="Detector control room" hidden>
+      <header class="win-h"><span>Detector control room</span><span class="win-sub">health · data taking · trigger</span><button class="win-x" type="button" aria-label="Close">✕</button></header>
+      <div class="win-b cr" id="dcrBody"></div>
+    </section>
+  </div>
+
+
+  <script src="js/content.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/shell.js"></script>
+  <script src="js/people.js"></script>
+  <script src="js/windows.js"></script>
+  <script src="js/physics.js"></script>
+  <script src="js/display.js"></script>
+  <script src="js/complex.js"></script>
+  <script src="js/computing.js"></script>
+  <script src="js/photo.js"></script>
+  <script src="js/rooms.js"></script>
+  <script src="js/health.js"></script>
+  <script src="js/ctrlrooms.js"></script>
+  <script src="js/overview.js"></script>
+  <script src="js/plot.js"></script>
+  <script src="js/tree.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/debug.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
