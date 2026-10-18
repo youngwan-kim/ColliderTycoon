@@ -29,3 +29,26 @@ PC.energy = function (gev) {
 PC.esc = function (s) {
   return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
 };
+
+/* Errors in the drawing code: reported, never fatal. One view throwing must not freeze the others,
+ * nor stop its own animation. Each place reports a repeating error about once every 10 s. */
+PC.errors = [];                                        // { where, msg, t, n } — read by the debug panel and the UI tests
+PC.report = function (where, e) {
+  var msg = (e && e.message) || String(e), now = Date.now();
+  var rec = PC.errors.filter(function (x) { return x.where === where && x.msg === msg; })[0];
+  if (!rec) { rec = { where: where, msg: msg, t: 0, n: 0 }; PC.errors.push(rec); if (PC.errors.length > 50) PC.errors.shift(); }
+  rec.n++;
+  if (now - rec.t > 10000) { rec.t = now; if (window.console) console.error('[' + where + ']', e); }
+};
+// run fn, reporting what it throws
+PC.guard = function (where, fn) {
+  try { return fn(); } catch (e) { PC.report(where, e); }
+};
+// an animation loop that survives errors: the next frame is asked for before this one is drawn.
+// PC.loops lets the debug tools step every loop by hand (headless browsers barely run frames).
+PC.loops = {};
+PC.loop = function (where, fn) {
+  function frame(ts) { requestAnimationFrame(frame); PC.guard(where, function () { fn(ts); }); }
+  PC.loops[where] = function (ts) { PC.guard(where, function () { fn(ts); }); };
+  requestAnimationFrame(frame);
+};

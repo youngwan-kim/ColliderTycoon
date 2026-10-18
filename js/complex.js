@@ -224,7 +224,7 @@ PC.Complex = (function () {
   }
 
   function frame(ts) {
-    if (!view || W === 0 || cv.offsetParent === null) { requestAnimationFrame(frame); return; }
+    if (!view || W === 0 || cv.offsetParent === null) return;
     var t = ts / 1000, dt = Math.min(0.1, (ts - lastT) / 1000 || 0), spots = { build: [], machine: [] };
     lastT = ts;
     ctx.clearRect(0, 0, W, H);
@@ -282,7 +282,6 @@ PC.Complex = (function () {
     if (view.ls) label('LONG SHUTDOWN · beams off', 10, 18, colors.b2);   // top left: Point 5's label is top centre
     else if (view.fault && view.fault.all) label('FAULT · ' + view.fault.name + ' · all beams lost', 10, 18, colors.b2);
     label('schematic · not to scale', W - 10, H - 10, colors.faint, 'right');
-    requestAnimationFrame(frame);
   }
 
   function ringAt(e) {
@@ -325,7 +324,7 @@ PC.Complex = (function () {
       readColors(); resize();
       window.addEventListener('resize', resize);
       cv.addEventListener('click', pick);
-      requestAnimationFrame(frame);
+      PC.loop('complex', frame);
     },
     resize: resize,
     readColors: readColors,

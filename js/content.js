@@ -263,11 +263,11 @@ PC.STAFF = [
   { id: 'shifter', name: 'Shift crew', cost: 10, growth: 1.14, each: { click: 0.25 },
     desc: '+25% data per click. Someone has to watch the screens at 4 a.m.' },
   { id: 'grad', name: 'Graduate student', cost: 50, growth: 1.14, each: { analysis: 0.08, flat: 0.3 },
-    desc: '+8% analysis speed.' },
+    desc: '+8% analysis speed. A PhD position: each student stays about 2 h, then the next one starts.' },
   { id: 'technician', name: 'Technician', cost: 200, growth: 1.16, each: { install: 0.04 },
     desc: 'Long Shutdowns 4% shorter (diminishing).' },
   { id: 'postdoc', requires: ['ps'], name: 'Postdoc', cost: 900, growth: 1.15, each: { analysis: 0.25 },
-    desc: '+25% analysis speed.' },
+    desc: '+25% analysis speed. A postdoc position: your own PhDs get it first; contracts of about 80 min.' },
   { id: 'convener', requires: ['ps'], name: 'Analysis group', cost: 2e3, growth: 40, max: 4, each: { slots: 1 },
     desc: 'One more analysis can run at the same time (up to 5).' },
   { id: 'accphys', requires: ['psb'], name: 'Accelerator physicist', cost: 5e3, growth: 1.17, each: { lumi: 0.1 },
@@ -277,7 +277,10 @@ PC.STAFF = [
   { id: 'compeng', requires: ['mainframe'], name: 'Computing engineer', cost: 5e3, growth: 1.17, each: { compute: 0.1 },
     desc: '+10% processing capacity.' },
   { id: 'professor', requires: ['sps'], name: 'Professor', cost: 3e4, growth: 1.22, each: { funding: 0.1, rep: 0.05 },
-    desc: '+10% funding, +5% reputation.' }
+    desc: '+10% funding, +5% reputation. A chair: your own postdocs who apply get it first.' },
+  // not hired: postdocs the lab keeps on permanently (see careers.js)
+  { id: 'scientist', internal: true, name: 'Research scientist', cost: 0, growth: 1, each: { analysis: 0.2, rep: 0.01 },
+    desc: '+20% analysis speed, +1% reputation. Former postdocs kept on permanently.' }
 ];
 
 /* ───────────────────────────── Analyses ─────────────────────────────

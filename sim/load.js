@@ -5,5 +5,5 @@ const root = path.join(__dirname, '..');
 global.print = console.log;
 global.debug = (m) => console.error(m);
 process.argv.slice(3).forEach((kv) => { const [k, v] = kv.split('='); global[k] = Number(v); });
-['js/content.js', 'js/engine.js', 'sim/bot.js', process.argv[2]].forEach((f) =>
+['js/content.js', 'js/engine.js', 'js/careers.js', 'js/worldcontent.js', 'js/economy.js', 'js/council.js', 'js/parliament.js', 'js/audit.js', 'sim/bot.js', process.argv[2]].forEach((f) =>
   vm.runInThisContext(fs.readFileSync(path.resolve(root, f), 'utf8'), { filename: f }));

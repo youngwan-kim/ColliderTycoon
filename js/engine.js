@@ -46,6 +46,9 @@ var PC = PC || {};
     faultEvery: 720, faultComp: 1.1, faultHelp: 0.04, incidentDelay: 150,
     // conferences
     confFirst: 900, confEvery: 1500, confOpen: 240,
+    // the calendar: years pass steadily (calBase), faster while the lab's milestones are ahead of it (calChase per year
+    // behind, up to calMax), slower once it is ahead of them (× calAhead); in years per second of game time
+    calBase: 2 / 3600, calChase: 1.5 / 3600, calMax: 30 / 3600, calAhead: 0.5,
     showRep: 0.3,           // reputation for presenting an evidence-level result (× its discovery reputation)
     confirmRep: 0.2,        // bonus when a presented result reaches 5σ
     retractCost: 2,         // a presented fluke that fades costs this many times what it earned
@@ -97,6 +100,7 @@ var PC = PC || {};
       meas: {},            // id → level
       ls: null,            // { remain, total, items, n }
       run: 1, lsCount: 0,
+      date: 1950,          // the calendar, in fractional years: continuous (calTick), never behind the lab's milestones for long
       legacy: keep.legacy || 0,
       gen: keep.gen || 0,
       log: keep.log || [],
@@ -112,7 +116,12 @@ var PC = PC || {};
       store: { used: 0, cap: BAL.storeStart },   // data on disk and tape, and the room for it
       dfaults: [],         // detector faults: { lane, kind, what, u, v (0–1 position on the subsystem map), remain, total }
       conf: { n: 0, next: BAL.confFirst, open: null, held: {}, ed: keep.confEd || {} },   // held: series → year it last met; ed: editions
-      confLog: keep.confLog || []   // every conference the lab attended, kept across generations (the archive)
+      confLog: keep.confLog || [],  // every conference the lab attended, kept across generations (the archive)
+      people: PC.Careers.fresh(keep.people),  // the students, postdocs and professors as individuals (careers.js)
+      econ: null,          // the world economy (economy.js), started on the first tick with its own random stream
+      council: null,       // the member states (council.js): drawn on the first tick
+      parl: null,          // the European assembly (parliament.js): seats, bills, laws in force
+      audit: null          // value for money and the audits (audit.js)
     };
   }
   // fill: n, phase 'off' (no collider) | 'turn' (injecting, `turn` s left) | 'stable' (`age` s into the fill);
@@ -134,6 +143,9 @@ var PC = PC || {};
     if (!s.conf.ed) s.conf.ed = {};
     if (!s.confLog) s.confLog = [];
     if (s.seed === undefined) s.seed = Math.floor(Math.random() * 4294967296);
+    if (s.date === undefined) s.date = milestoneYear(s);  // older saves: the calendar starts at the lab's year
+    if (!s.econ) s.econ = PC.Economy.fresh(s.seed ^ 0x5bd1e995, s.date);   // and the world economy from there
+    if (!s.people) PC.Careers.adopt(s);                   // the staff on the books become people
     return s;
   }
   // deterministic per save (mulberry32), so a save replays the same faults and fluke sizes
@@ -232,7 +244,11 @@ var PC = PC || {};
   /* ───────────── multipliers ───────────── */
   function staffSum(s, key) {
     var t = 0;
-    PC.STAFF.forEach(function (st) { if (st.each[key]) t += st.each[key] * n(s, st.id); });
+    PC.STAFF.forEach(function (st) {
+      if (!st.each[key]) return;
+      var e = PC.Careers.eff(s, st.id);                  // people: their performance; the rest: head counts
+      t += st.each[key] * (e === null ? n(s, st.id) : e);
+    });
     return t;
   }
 
@@ -264,8 +280,11 @@ var PC = PC || {};
     m.trigger *= 1 + staffSum(s, 'trigger');
     m.compute *= 1 + staffSum(s, 'compute');
     m.analysis *= 1 + staffSum(s, 'analysis');
-    m.funding *= (1 + staffSum(s, 'funding')) * (1 + BAL.repFunding * s.rep) * legacy;
-    m.rep *= 1 + staffSum(s, 'rep');
+    var al = PC.Careers.alumniMult(s);                   // former members in industry and at other labs
+    m.funding *= (1 + staffSum(s, 'funding')) * (1 + BAL.repFunding * s.rep) * legacy * al.funding;
+    m.rep *= (1 + staffSum(s, 'rep')) * al.rep * PC.Parliament.repMult(s);
+    m.power = PC.Economy.powerMult(s) * (1 - PC.Economy.powerShare(s) * (PC.Parliament.powerTax(s) - 1));   // what the electricity bill (and its taxes) leaves
+    m.budget = PC.Council.budgetMult(s) * PC.Parliament.budgetMult(s) * PC.Audit.budgetMult(s);   // what the states pay, the laws on it, the auditors' cuts
     m.click *= 1 + staffSum(s, 'click');
     m.lumiStaff = (1 + staffSum(s, 'lumi')) * legacy;
     m.flat = staffSum(s, 'flat');
@@ -371,7 +390,7 @@ var PC = PC || {};
     if (trigSat > 1 || compSat > 1) bottleneck = trigSat >= compSat ? 'trigger' : 'computing';
     // during a shutdown the agencies keep paying part of the operations grant; it pays for the data taken,
     // stored or not, so a full disk never leaves the lab without the money for more
-    var fundsRate = s.ls ? s.ls.grant || 0 : dataRate * BAL.grantRatio * m.funding;
+    var fundsRate = s.ls ? s.ls.grant || 0 : dataRate * BAL.grantRatio * m.funding * m.power * m.budget;
     // storage: once it is full, nothing new is written; analyses and the data count stand still
     var st = s.store || { used: 0, cap: Infinity }, full = st.used >= st.cap, dataIn = dataRate;
     if (full) { dataRate = 0; bottleneck = 'storage'; }
@@ -428,13 +447,17 @@ var PC = PC || {};
     });
   }
   function staffStatus(s, st) {
+    if (st.internal) return 'hidden';                   // research scientists come from the postdocs, not from hiring
     if (st.max && n(s, st.id) >= st.max) return 'maxed';
     if (!st.requires) return 'available';
     var miss = missing(s, st);
     if (!miss.length) return 'available';
     return oneStep(s, miss) ? 'locked' : 'hidden';
   }
-  function staffCost(s, st) { return st.cost * Math.pow(st.growth, n(s, st.id)); }
+  // what things cost now: the list price, moved by the world economy (economy.js costIndex)
+  function facCost(s, f) { return f.cost * PC.Economy.costIndex(s, 'fac') * PC.Parliament.costMult(s, 'fac'); }
+  function techCost(s, t) { return t.cost * PC.Economy.costIndex(s, 'tech') * PC.Parliament.costMult(s, 'tech'); }
+  function staffCost(s, st) { return st.cost * Math.pow(st.growth, n(s, st.id)) * PC.Economy.costIndex(s, 'staff') * PC.Parliament.costMult(s, 'staff'); }
 
   /* ───────────── actions ───────────── */
   function logEv(s, text, kind) {
@@ -444,8 +467,9 @@ var PC = PC || {};
 
   function buyFacility(s, id) {
     var f = FAC[id];
-    if (!f || facStatus(s, f) !== 'available' || s.funds < f.cost) return false;
-    s.funds -= f.cost;
+    var c = f && facCost(s, f);
+    if (!f || facStatus(s, f) !== 'available' || s.funds < c) return false;
+    s.funds -= c;
     s.fac[id] = { built: f.build <= 0, remain: f.build * BAL.timeScale };
     logEv(s, (f.build > 0 ? 'Construction started: ' : 'Commissioned: ') + f.name, 'build');
     return true;
@@ -453,8 +477,9 @@ var PC = PC || {};
 
   function buyTech(s, id) {
     var t = TECH[id];
-    if (!t || techStatus(s, t) !== 'available' || s.funds < t.cost) return false;
-    s.funds -= t.cost;
+    var c = t && techCost(s, t);
+    if (!t || techStatus(s, t) !== 'available' || s.funds < c) return false;
+    s.funds -= c;
     if (t.install > 0) {
       s.tech[id] = 'pending';
       logEv(s, 'Ordered: ' + t.name + ' (awaiting Long Shutdown)', 'tech');
@@ -611,6 +636,7 @@ var PC = PC || {};
       var res = paperResult(p.id, p.level);
       s.accepted.push({ id: p.id, name: p.name, result: res, journal: p.journal, gain: g });
       logEv(s, 'Published in ' + p.journal + ': ' + p.name + (res ? ' — ' + res : ''), 'paper');
+      PC.Careers.paper(s, p.name, p.journal);
       ev.push({ type: 'paperAccepted', id: p.id, journal: p.journal, rep: g, result: res, name: p.name });
       return false;
     });
@@ -663,7 +689,7 @@ var PC = PC || {};
 
   /* ───────────── storage ───────────── */
   // capacity is priced against the lab's budget: a share of the grant every unit of data earns, cut by storage technology
-  function storePrice(s) { var m = mults(s); return BAL.storePrice * m.funding / m.storage; }
+  function storePrice(s) { var m = mults(s); return BAL.storePrice * m.funding / m.storage * PC.Economy.costIndex(s, 'store') * PC.Parliament.costMult(s, 'store'); }
   // capacity for `sec` seconds of the data now coming in
   function storeChunk(s, dv, sec) { dv = dv || derive(s); return Math.max(BAL.storeMin, dv.dataIn * sec); }
   function buyStorage(s, amount, extra) {
@@ -749,6 +775,7 @@ var PC = PC || {};
     st.shown = s.conf.open.name; st.gain = g;
     s.rep += g; s.runTotals.rep += g; s.life.rep += g;
     s.conf.open.shown.push(id); s.conf.open.sig[id] = item.sigma; s.conf.open.rep += g;
+    PC.Careers.presented(s, s.conf.open, it.name);
     logEv(s, 'Shown at ' + s.conf.open.name + ': ' + it.name + ' (' + item.sigma.toFixed(1) + 'σ)', 'conf');
     return { rep: g, name: it.name, conf: s.conf.open.name };
   }
@@ -766,7 +793,7 @@ var PC = PC || {};
       np: (o.papers || []).length,                                            // the papers shown, the first few kept in full
       papers: (o.papers || []).slice(0, 8).map(function (p) { return { result: p.result || p.name, journal: p.journal }; }),
       shown: o.shown.map(function (id) { return { id: id, kind: DISC[id] ? 'disc' : 'exc', sigma: (o.sig || {})[id] || 0 }; }),
-      rep: o.rep || 0, staff: o.staff || {}, seed: o.seed || 1 });
+      rep: o.rep || 0, staff: o.staff || {}, seed: o.seed || 1, speaker: o.speaker ? o.speaker.name : null });
     if (s.confLog.length > 300) s.confLog.shift();
   }
   // what became of a result shown at a conference: a discovery, withdrawn, or still open
@@ -886,11 +913,37 @@ var PC = PC || {};
     });
   }
 
+  /* ───────────── luminosity, per run ───────────── */
+  // Collisions delivered by the machines and the share the experiment recorded, integrated over the run, as the
+  // experiments plot them: delivered vs recorded luminosity. Dead time: the busy trigger (it grows as the trigger
+  // saturates) and everything while storage is full.
+  function deadTime(s, dv) {
+    if (s.ls || dv.storeFull) return 1;
+    return Math.min(0.9, 0.02 + 0.25 * Math.max(0, 1 - 1 / Math.max(1, dv.trigSat)));
+  }
+  function lumiTick(s, dv, dt) {
+    var r = s.lumi;
+    if (!r || r.run !== s.run) r = s.lumi = { run: s.run, t0: s.t, del: 0, rec: 0, pts: [[0, 0, 0]] };
+    var coll = 0;
+    dv.facs.forEach(function (x) { if (x.f.id !== 'cosmic' && x.f.role === 'physics') coll += x.raw; });
+    r.del += coll * dt; r.rec += coll * dt * (1 - deadTime(s, dv));
+    var last = r.pts[r.pts.length - 1], t = s.t - r.t0;
+    if (t - last[0] >= 20) {
+      r.pts.push([t, r.del, r.rec]);
+      if (r.pts.length > 240) r.pts = r.pts.filter(function (p, i) { return i % 2 === 0 || i === r.pts.length - 1; });   // thin the oldest half
+    }
+  }
+
   /* ───────────── time ───────────── */
   function tick(s, dt) {
     var ev = [];
     if (!s.beam) migrate(s);
     s.t += dt; s.life.t += dt;
+    calTick(s, dt);
+    PC.Economy.tick(s, ev);                              // the world economy, month by month
+    PC.Council.tick(s, ev);                              // the member states: founders, joining, leaving, contributions
+    PC.Parliament.tick(s, ev);                           // the European assembly: elections, bills, votes
+    PC.Audit.tick(s, dt, ev);                            // value for money: watch, audits, a closure vote
 
     PC.FACILITIES.forEach(function (f) {
       var st = s.fac[f.id];
@@ -933,6 +986,7 @@ var PC = PC || {};
       cf.open = { name: ser.name, year: y, edition: cf.ed[ser.name], remain: BAL.confOpen, shown: [], sig: {}, papers: s.accepted, rep: 0,
         staff: { professor: n(s, 'professor'), postdoc: n(s, 'postdoc'), grad: n(s, 'grad') }, seed: Math.floor(rand(s) * 1e9) };
       cf.n++;
+      cf.open.speaker = PC.Careers.speaker(s, cf.open);    // who gives the talk
       // the papers published since the last conference are shown there
       var bonus = 0;
       s.accepted.forEach(function (p) { bonus += p.gain * BAL.confPaperRep; });
@@ -941,6 +995,8 @@ var PC = PC || {};
       s.accepted = [];
       ev.push({ type: 'conf', name: cf.open.name, papers: cf.open.papers.length, bonus: bonus });
     }
+
+    PC.Careers.tick(s, dt, ev);
 
     var dv = derive(s);
     var beamOn = dv.facs.some(function (x) { return x.f.id !== 'cosmic' && x.raw > 0; });
@@ -959,6 +1015,7 @@ var PC = PC || {};
       if (amt >= Math.min(storeChunk(s, dv, BAL.storeChunk) * 0.25, BAL.storeMin)) buyStorage(s, amt, df);
     }
     s.data += dd; s.funds += df;
+    lumiTick(s, dv, dt);
     s.runTotals.data += dd; s.life.data += dd;
     s.runTotals.funds += df; s.life.funds += df;
 
@@ -977,6 +1034,7 @@ var PC = PC || {};
         s.rep += r; s.runTotals.rep += r; s.life.rep += r;
         s.funds += g;
         logEv(s, 'DISCOVERY (5σ): ' + d.name + ' — ' + d.particle + (st.shown ? ' (as shown at ' + st.shown + ')' : ''), 'disc');
+        PC.Careers.discovery(s, d);
         ev.push({ type: 'discovery', id: d.id, rep: r, grant: g, shown: st.shown || null });
       }
     });
@@ -1014,6 +1072,12 @@ var PC = PC || {};
   }
 
   // Fast-forward (offline progress). Coarse steps are fine: rates are piecewise constant.
+  // the calendar moves on: steadily, chasing the milestones when they are ahead, slower when it is ahead of them
+  function calTick(s, dt) {
+    if (s.date === undefined) s.date = milestoneYear(s);
+    var lag = milestoneYear(s) - s.date;
+    s.date += dt * (lag > 0 ? Math.min(BAL.calMax, BAL.calBase + BAL.calChase * lag) : BAL.calBase * BAL.calAhead);
+  }
   function simulate(s, seconds, step) {
     seconds = Math.min(seconds, BAL.offlineCap);
     var ev = [], before = { data: s.runTotals.data, funds: s.runTotals.funds, rep: s.runTotals.rep };
@@ -1025,7 +1089,10 @@ var PC = PC || {};
     };
   }
 
-  function year(s) {
+  // the calendar year: whole years of the continuous date
+  function year(s) { return Math.floor(s.date !== undefined ? s.date : milestoneYear(s)); }
+  // the lab's milestones: the latest year of what it has built, installed or discovered
+  function milestoneYear(s) {
     var y = 1950;
     PC.FACILITIES.forEach(function (f) { if (built(s, f.id) && !f.speculative) y = Math.max(y, f.year); });
     PC.TECH.forEach(function (t) { if (installed(s, t.id) && !t.speculative) y = Math.max(y, t.year); });
@@ -1041,10 +1108,25 @@ var PC = PC || {};
     var gain = prestigeGain(s);
     // the conference archive goes on to the next generation, the fates of this one's results settled
     s.confLog.forEach(function (e) { if (e.gen === s.gen) e.shown.forEach(function (x) { x.fate = confFate(s, x); }); });
-    var keep = { legacy: s.legacy + gain, gen: s.gen + 1, life: s.life, log: s.log, flags: s.flags, confLog: s.confLog, confEd: s.conf.ed };
+    var keep = { legacy: s.legacy + gain, gen: s.gen + 1, life: s.life, log: s.log, flags: s.flags, confLog: s.confLog, confEd: s.conf.ed,
+      people: PC.Careers.keep(s) };
     logEv(s, 'New-generation proposal approved. +' + gain + ' Legacy.', 'prestige');
     var ns = newState(keep);
     return ns;
+  }
+
+  // the council closes the lab: the generation ends with no Legacy gained; Legacy, the archive and the alumni are kept
+  function close(s) {
+    s.confLog.forEach(function (e) { if (e.gen === s.gen) e.shown.forEach(function (x) { x.fate = confFate(s, x); }); });
+    logEv(s, 'The council closes the lab. A new generation begins, with no Legacy gained.', 'audit');
+    return newState({ legacy: s.legacy, gen: s.gen + 1, life: s.life, log: s.log, flags: s.flags, confLog: s.confLog, confEd: s.conf.ed,
+      people: PC.Careers.keep(s) });
+  }
+  // what the closing screen tells: the generation in numbers
+  function closeSummary(s) {
+    var nd = PC.DISCOVERIES.filter(function (d) { return s.disc[d.id] && s.disc[d.id].done; }).length;
+    return { from: 1950, to: Math.floor(s.date), t: s.t, disc: nd, confs: s.confLog.filter(function (c) { return c.gen === s.gen; }).length,
+      people: s.people ? s.people.list.length + s.people.alumni.filter(function (x) { return x.gen === s.gen; }).length : 0, rep: s.rep, legacy: s.legacy, gen: s.gen };
   }
 
   function nobels(s) {
@@ -1057,17 +1139,17 @@ var PC = PC || {};
     newState: newState, derive: derive, tick: tick, simulate: simulate, click: click,
     buyFacility: buyFacility, buyTech: buyTech, hire: hire, startShutdown: startShutdown,
     pendingTech: pendingTech, shutdownDuration: shutdownDuration,
-    facStatus: facStatus, techStatus: techStatus, staffStatus: staffStatus, staffCost: staffCost,
+    facStatus: facStatus, techStatus: techStatus, staffStatus: staffStatus, staffCost: staffCost, facCost: facCost, techCost: techCost,
     missing: missing, name: name, has: has, caps: caps, facEnergy: facEnergy, facLumi: facLumi,
     measurements: measurements, publish: publish, paperSlots: paperSlots, reviewOdds: reviewOdds, reviewSpeed: reviewSpeed,
     reviewQuality: reviewQuality, paperResult: paperResult, inReview: inReview,
     detectorHealth: detectorHealth, ageingSlow: ageingSlow, maintDuration: maintDuration, dfaultRepairSpeed: dfaultRepairSpeed,
     setThreshold: setThreshold, maskChannel: maskChannel, thrEff: thrEff,
-    storePrice: storePrice, storeChunk: storeChunk, buyStorage: buyStorage, nextSeries: nextSeries, confFate: confFate,
-    discoveryInfo: discoveryInfo, year: year, nobels: nobels, migrate: migrate,
+    storePrice: storePrice, storeChunk: storeChunk, buyStorage: buyStorage, nextSeries: nextSeries, confFate: confFate, deadTime: deadTime,
+    discoveryInfo: discoveryInfo, year: year, milestoneYear: milestoneYear, nobels: nobels, migrate: migrate, _rand: rand, _log: logEv,
     excessInfo: excessInfo, presentable: presentable, present: present, setTrigger: setTrigger,
     dumpFill: dumpFill, helpFault: helpFault, fillLumi: fillLumi, repairSpeed: repairSpeed,
     startAnalysis: startAnalysis, stopAnalysis: stopAnalysis, activeCount: activeCount,
-    canPrestige: canPrestige, prestigeGain: prestigeGain, prestige: prestige
+    canPrestige: canPrestige, prestigeGain: prestigeGain, prestige: prestige, close: close, closeSummary: closeSummary
   };
 })();

@@ -492,11 +492,11 @@ PC.Computing = (function () {
 
   function frame(ts) {
     var dt = Math.min(0.1, (ts - last) / 1000 || 0); last = ts;
-    if (!view || W === 0 || cv.offsetParent === null) { requestAnimationFrame(frame); return; }
+    if (!view || W === 0 || cv.offsetParent === null) return;
     // the machines on top (room for the name tag above them), the pipe, the storage hall below
     var CH = Math.round(Math.min(W + 22, H * 0.52)), PH = 30, SY = CH + PH;
     var cx = W / 2, cy = (CH + 22) / 2, R = Math.min(W, CH - 22) / 2 - 2, t = ts / 1000, u = R / 100;
-    geo = { split: CH, inY: cy, outY: SY + (H - SY) / 2, outYs: [0.3, 0.5, 0.7].map(function (f) { return SY + (H - SY) * f; }) };
+    geo = { split: CH, inY: cy, inSpan: Math.min(CH * 0.5, 90), outY: SY + (H - SY) / 2, outYs: [0.3, 0.5, 0.7].map(function (f) { return SY + (H - SY) * f; }) };
     var lv = level();
     var util = view.ls ? 0.08 : Math.min(1, view.util), sat = !view.ls && view.util > 1;
     var refresh = ts - ledT > 160; if (refresh) ledT = ts;
@@ -594,7 +594,6 @@ PC.Computing = (function () {
     if (view.ls) label('no beam · reprocessing', cx, cy + R * 0.8, colors.faint, 'center', 9);
     else if (lv !== 'grid') label(PC.fmt(view.rate) + ' ev/s · load ' + Math.round(Math.min(9.99, view.util) * 100) + '%',
       cx, cy + R * 0.86, sat ? colors.b2 : colors.faint, 'center', 8);
-    requestAnimationFrame(frame);
   }
 
   return {
@@ -605,7 +604,7 @@ PC.Computing = (function () {
       cv.addEventListener('mousemove', function (e) { cv.style.cursor = inStore(e) ? 'pointer' : ''; });
       readColors(); resize();
       window.addEventListener('resize', resize);
-      requestAnimationFrame(frame);
+      PC.loop('computing', frame);
     },
     resize: resize,
     readColors: readColors,

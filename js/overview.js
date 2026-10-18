@@ -1,14 +1,14 @@
 /* Overview links, drawn over the four panels:
  *   zoom lines from the experiment's spot on the complex map to the detector lens;
- *   the readout link from the detector, through the trigger, to the computing room's door (left wall),
- *   with packets at a rate that follows the recorded event rate;
+ *   the readout link from the detector down into the trigger compartment under it, and from there one link per
+ *   trigger stream, in its colour, curving to the computing room's left wall, with packets at the rate it records;
  *   the data link from the storage (the computing room's right wall) to the analysis room, carrying reconstructed events.
  */
 var PC = PC || {};
 
 PC.Overview = (function () {
   var cv, ctx, root, map, det, comp, ana, W = 0, H = 0, dpr = 1, colors = {}, view = null, packets = [], acc = 0, last = 0;
-  var dpk = [], dacc = 0;
+  var dpk = [], dacc = 0, tacc = {};                  // tacc: packet accumulators, one per trigger stream's link
 
   function readColors() {
     var cs = getComputedStyle(document.documentElement);
@@ -36,7 +36,6 @@ PC.Overview = (function () {
 
   function frame(ts) {
     var dt = Math.min(0.1, (ts - last) / 1000 || 0); last = ts;
-    requestAnimationFrame(frame);
     if (!view) return;
     var o = root.getBoundingClientRect();
     if (Math.abs(o.width - W) > 0.5 || Math.abs(o.height - H) > 0.5) resize();
@@ -54,35 +53,52 @@ PC.Overview = (function () {
       ctx.restore();
     }
 
-    // readout link: detector → trigger → computing
-    var p1 = [C.l, C.y], ang = Math.atan2(p1[1] - D.y, p1[0] - D.x);
-    var p0 = [D.x + Math.cos(ang) * D.r, D.y + Math.sin(ang) * D.r];
-    var len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
-    if (len < 8) return;
-    ctx.strokeStyle = colors.dim; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-    var m = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2];
-    if (!view.ls && view.rate > 0) {
-      acc += dt * Math.min(12, 1 + 2 * Math.log10(1 + view.rate));
-      while (acc >= 1) { acc -= 1; packets.push(0); }
-    }
-    packets = packets.map(function (p) { return p + dt * 1.2; }).filter(function (p) { return p < 1; });
-    ctx.fillStyle = view.sat ? colors.b2 : colors.b1;
-    packets.forEach(function (p) { ctx.fillRect(p0[0] + (p1[0] - p0[0]) * p - 1.5, p0[1] + (p1[1] - p0[1]) * p - 1.5, 3, 3); });
-    // the trigger sits on the link
-    ctx.fillStyle = colors.panel; ctx.strokeStyle = view.trigLimit ? colors.b2 : colors.dim;
-    ctx.fillRect(m[0] - 7, m[1] - 7, 14, 14); ctx.strokeRect(m[0] - 6.5, m[1] - 6.5, 13, 13);
-    ctx.fillStyle = view.trigLimit ? colors.b2 : colors.fg; ctx.font = '600 9px ' + colors.mono; ctx.textAlign = 'center';
-    ctx.fillText('T', m[0], m[1] + 3);
-    ctx.font = '10px ' + colors.mono; ctx.fillStyle = colors.dim;
-    ctx.fillText('trigger', m[0], m[1] - 12);
-    ctx.textAlign = 'left';
-    // the trigger menu: how the bandwidth is shared between the streams
-    if (view.streams) {
-      var bw = 34, bx = m[0] - bw / 2, by = m[1] + 11, cols = [colors.b1, colors.ok, colors.warn, colors.dim];
-      view.streams.forEach(function (x, i) {
-        var w = bw * x.f;
-        ctx.fillStyle = cols[i % cols.length]; ctx.fillRect(bx, by, Math.max(0, w - 1), 3); bx += w;
+    // readout links: the detector drops into the trigger compartment under it (trigview.js); from its right side one
+    // link per trigger stream, in the stream's colour, curves to the computing room's left wall, leaving and arriving
+    // level, with packets at the rate that stream records
+    var tb = PC.TrigView.ports();
+    if (tb) {
+      var top = tb.top - o.top, a0 = [D.x, D.y + D.r], a1 = [D.x, top];
+      ctx.strokeStyle = colors.dim; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(a0[0], a0[1]); ctx.lineTo(a1[0], a1[1]); ctx.stroke();
+      var ss = view.streams && view.streams.length ? view.streams : [{ id: 'mu', rec: view.rate }], n = ss.length;
+      var span = Math.min(tb.height - 40, 16 * (n - 1)), inSpan = Math.min(pt.inSpan || 60, 22 * (n - 1));
+      var tlinks = ss.map(function (x, i) {
+        var f = n > 1 ? i / (n - 1) : 0.5;
+        var b0 = [tb.right - o.left, top + 31 + span * (n > 1 ? f : 0)], b3 = [C.l, C.y - inSpan / 2 + inSpan * f], dx = (b3[0] - b0[0]) * 0.6;
+        return { id: x.id, rec: x.rec || 0, col: PC.TrigView.streamColor(x.id) || colors.dim, c: [b0, [b0[0] + dx, b0[1]], [b3[0] - dx, b3[1]], b3] };
+      });
+      tlinks.forEach(function (l) {
+        var c = l.c;
+        ctx.strokeStyle = l.col; ctx.globalAlpha = l.rec > 0 ? 0.55 : 0.25; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(c[0][0], c[0][1]); ctx.bezierCurveTo(c[1][0], c[1][1], c[2][0], c[2][1], c[3][0], c[3][1]); ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+      // the drop into the trigger carries everything the detector reads out
+      if (!view.ls && view.rate > 0) {
+        acc += dt * Math.min(12, 1 + 2 * Math.log10(1 + view.rate));
+        while (acc >= 1) { acc -= 1; packets.push({ p: 0, seg: -1 }); }
+      }
+      tlinks.forEach(function (l, i) {
+        if (view.ls || l.rec <= 0) return;
+        l.acc = (tacc[l.id] || 0) + dt * Math.min(8, 0.6 + 1.6 * Math.log10(1 + l.rec));
+        while (l.acc >= 1) { l.acc -= 1; packets.push({ p: 0, seg: i, id: l.id }); }
+        tacc[l.id] = l.acc;
+      });
+      packets = packets.filter(function (k) {
+        k.p += dt * (k.seg < 0 ? 2.4 : 0.9);
+        return k.p < 1 && (k.seg < 0 || (tlinks[k.seg] && tlinks[k.seg].id === k.id));
+      });
+      packets.forEach(function (k) {
+        var x, y, f = k.p, m = 1 - f;
+        if (k.seg < 0) { x = a0[0]; y = a0[1] + (a1[1] - a0[1]) * f; ctx.fillStyle = view.sat ? colors.b2 : colors.b1; }
+        else {
+          var bz = tlinks[k.seg].c;
+          x = m * m * m * bz[0][0] + 3 * m * m * f * bz[1][0] + 3 * m * f * f * bz[2][0] + f * f * f * bz[3][0];
+          y = m * m * m * bz[0][1] + 3 * m * m * f * bz[1][1] + 3 * m * f * f * bz[2][1] + f * f * f * bz[3][1];
+          ctx.fillStyle = view.sat ? colors.b2 : tlinks[k.seg].col;
+        }
+        ctx.fillRect(x - 1.5, y - 1.5, 3, 3);
       });
     }
 
@@ -120,11 +136,11 @@ PC.Overview = (function () {
     init: function (canvas, rootEl, mapEl, detEl, compEl, roomsEl) {
       cv = canvas; ctx = cv.getContext('2d'); root = rootEl; map = mapEl; det = detEl; comp = compEl; ana = roomsEl;
       readColors(); resize();
-      requestAnimationFrame(frame);
+      PC.loop('overview', frame);
     },
     readColors: readColors,
     // v: { rate: recorded events/s, data: reconstructed events/s, sat: computing-limited, trigLimit: trigger-limited, ls,
-    //      streams: [{sym, f}] | null (the trigger menu's shares) }
+    //      streams: [{id, sym, f, rec (events/s it records)}] (the trigger menu) }
     set: function (v) { view = v; }
   };
 })();

@@ -674,14 +674,18 @@ PC.Display = (function () {
     var dt = Math.min(0.1, (ts - last) / 1000 || 0); last = ts;
     if (view.mode && W > 0) {
       var key = view.mode + '|' + view.key + '|' + W + 'x' + H + '|' + view.B;
-      if (key !== geomKey) { geomKey = key; geom = buildGeometry(); }
+      if (key !== geomKey) {
+        if (geom && geom.mode !== view.mode) events = [];   // a new detector: the old one's events don't fit it
+        geomKey = key; geom = buildGeometry();
+      }
       ctx.clearRect(0, 0, W, H);
       ctx.drawImage(geom.img, 0, 0, W, H);
       events.forEach(function (e) { e.age += dt; drawEvent(e); });
       events = events.filter(function (e) { return e.age < e.life; });
       // the experiment's machine has no beam: say why (cosmics still come through)
       if (view.off) {
-        var oy = view.mode === 'collider' ? H * 0.09 : H * 0.1, blink = view.off.fault ? 0.6 + 0.4 * Math.sin(last / 180) : 1;
+        var oy = H * 0.2,                                // under the detector's name at the top of the lens
+            blink = view.off.fault ? 0.6 + 0.4 * Math.sin(last / 180) : 1;
         ctx.save(); ctx.globalAlpha = blink;
         ctx.font = '600 11px ' + colors.mono; ctx.textAlign = 'center';
         var msg = view.off.fault ? 'BEAM LOST · ' + view.off.text : 'NO BEAM · ' + view.off.text;
@@ -698,7 +702,6 @@ PC.Display = (function () {
       var engSpots = ls ? geom.floor.concat(geom.work) : view.beam || view.off ? null : geom.floor;   // a short stop is no access
       engs.step(ctx, dt, last / 1000, engSpots, PC.People.shown(st.deteng, 4), { scale: ps, color: colors.fg, speed: 12 * ps, pause: [3, 8] });
     }
-    requestAnimationFrame(frame);
   }
 
   function spawn() {
@@ -719,7 +722,7 @@ PC.Display = (function () {
       cv = canvas; ctx = cv.getContext('2d');
       readColors(); resize();
       window.addEventListener('resize', resize);
-      requestAnimationFrame(frame);
+      PC.loop('display', frame);
     },
     readColors: readColors,
     resize: resize,

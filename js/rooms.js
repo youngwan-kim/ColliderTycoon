@@ -75,8 +75,8 @@ PC.Rooms = (function () {
     var A = { x: 0, y: 0, w: W, h: split }, C = { x: 0, y: split, w: W, h: H - split };
     var g = { u: u, A: A, C: C, wall: split, ps: Math.max(1, Math.min(W, H * 0.5) / 170) };
     // the top wall: the projection screen and the whiteboard
-    g.scr = { x: A.x + A.w * 0.05, y: A.y + 20 * u, w: A.w * 0.56, h: A.h * 0.2 };
-    g.board = { x: A.x + A.w * 0.67, y: A.y + 20 * u, w: A.w * 0.28, h: A.h * 0.2 };
+    g.scr = { x: A.x + A.w * 0.05, y: A.y + 20 * u, w: A.w * 0.56, h: A.h * 0.28 };
+    g.board = { x: A.x + A.w * 0.67, y: A.y + 20 * u, w: A.w * 0.28, h: A.h * 0.28 };
     g.walkY = g.scr.y + g.scr.h + 12 * u;
     // everything below the wall must fit above the paper station: two table rows, the walkway, three workstation
     // rows. Short of room, the gaps and the tables shrink together (k)
@@ -425,32 +425,88 @@ PC.Rooms = (function () {
     ctx.restore();
     ctx.strokeStyle = colors.faint; ctx.beginPath(); ctx.moveTo(px, py + ph + 0.5); ctx.lineTo(px + pw, py + ph + 0.5); ctx.stroke();
   }
-  // the whiteboard: scribbles in board coordinates (0–1), added by whoever stands at it
+  // the whiteboard: scribbles anywhere on it, sometimes over each other, added by whoever stands at it.
+  // Each is drawn in its own box (coordinates in board widths, before shrinking), placed at (fx, fy) of the free space
+  var NOTES = ['σ = N/∫L', 'S/√B ≈ 5?', 'm_H ≈ 125', 'p_T > 25', 'χ²/ndf ≈ 1', 'H → γγ', 'pile-up!', 'unblind?', '|η| < 2.4', 'Z → μμ', 'eff × acc', 'syst ±3%', 'TODO: MC', 'trigger SF'];
+  var INK = 0.6;                                                              // scribbles at this fraction of their box size
   function scribble() {
-    if (board.length > 26) { board.length = 0; return; }                     // full: wipe it
-    var x = 0.06 + Math.random() * 0.8, y = 0.12 + Math.random() * 0.72, r = Math.random(), pts = [];
-    if (r < 0.3) { for (var i = 0; i <= 8; i++) pts.push([x + i * 0.02, y + Math.sin(i * 1.6) * 0.04]); }          // a wavy photon
-    else if (r < 0.55) { pts.push([x, y], [x + 0.08, y + 0.06], [x + 0.16, y]); pts.push(null, [x + 0.08, y + 0.06], [x + 0.08, y + 0.16]); }   // a vertex
-    else if (r < 0.75) { for (var k = 0; k <= 10; k++) pts.push([x + 0.05 + Math.cos(k / 10 * 6.28) * 0.05, y + Math.sin(k / 10 * 6.28) * 0.06]); }   // a loop
-    else { for (var j = 0; j < 6; j++) pts.push([x + j * 0.025, y + (j % 2 ? -0.02 : 0.02)]); }                  // an equation's worth of squiggle
-    board.push({ pts: pts, col: Math.random() < 0.25 ? 'b1' : Math.random() < 0.15 ? 'b2' : 'dim' });
+    if (board.length >= 12) board.length = 0;                                  // full: wipe it
+    var x = 0, k = Math.random(), pts = [];
+    var best = null, bd = -1;                                                  // the emptiest of a few spots: spread out, overlapping a little now and then
+    for (var c = 0; c < 4; c++) {
+      var cx = Math.random(), cy = Math.random(), d = board.reduce(function (m, b) { return Math.min(m, Math.hypot((cx - b.fx) * 0.8, (cy - b.fy) * 2.2)); }, 9);
+      if (d > bd) { bd = d; best = [cx, cy]; }
+    }
+    var s = { fx: best[0], fy: best[1], w: 0.62, col: Math.random() < 0.35 ? 'b1' : Math.random() < 0.2 ? 'b2' : 'fg', tilt: (Math.random() - 0.5) * 0.12 };
+    var on = board.map(function (b) { return b.text; }), fresh = function (l) { l = l.filter(function (n) { return on.indexOf(n) < 0; }); return l[Math.floor(Math.random() * l.length)] || l[0]; };
+    if (k < 0.4) { s.text = fresh(NOTES); s.x = x; s.w = 0.75; s.under = Math.random() < 0.3; s.ring = !s.under && Math.random() < 0.3; }
+    else if (k < 0.62) {                                                       // a Feynman diagram: two fermions in, a photon, two out
+      pts.push([x, 0.04], [x + 0.16, 0.14], [x, 0.24], null);
+      for (var i = 0; i <= 10; i++) pts.push([x + 0.16 + i * 0.03, 0.14 + Math.sin(i * 2.3) * 0.035]);
+      pts.push(null, [x + 0.62, 0.04], [x + 0.46, 0.14], [x + 0.62, 0.24]);
+      s.arrows = [[x, 0.04, x + 0.08, 0.09], [x + 0.46, 0.14, x + 0.54, 0.09]];
+      s.note = Math.random() < 0.5 ? 'γ*' : 'Z'; s.w = 0.8;
+    } else if (k < 0.82) {                                                     // a sketched mass plot: axes, a falling background, a bump
+      pts.push([x, 0.02], [x, 0.25], [x + 0.6, 0.25], null);
+      for (var j = 0; j <= 14; j++) { var q = j / 14; pts.push([x + 0.03 + q * 0.55, 0.24 - 0.17 * Math.exp(-q * 2.2) - 0.09 * Math.exp(-Math.pow((q - 0.62) / 0.06, 2))]); }
+      s.note = '?'; s.w = 0.72;
+    } else {                                                                   // an arrow to a note
+      pts.push([x, 0.14], [x + 0.18, 0.14], null, [x + 0.13, 0.1], [x + 0.18, 0.14], [x + 0.13, 0.18]);
+      s.text = fresh(['ask!', 'blind', 'check', 'why?']) || 'why?'; s.x = x + 0.22; s.w = 0.55;
+    }
+    s.pts = pts; board.push(s);
   }
   function drawBoard(B) {
-    ctx.fillStyle = colors.screen; ctx.fillRect(B.x, B.y, B.w, B.h);
-    ctx.strokeStyle = colors.dim; ctx.lineWidth = 1; ctx.strokeRect(Math.round(B.x) + 0.5, Math.round(B.y) + 0.5, Math.round(B.w), Math.round(B.h));
-    ctx.fillStyle = colors.faint; ctx.fillRect(B.x + 2, B.y + B.h, B.w - 4, 2);                               // the marker tray
+    var SW = B.w, sc = SW * INK, RH = 0.27 * sc, lw = Math.max(0.8, SW / 120);
+    // the aluminium frame, the white surface with a glare across it; a sticky note under a magnet; the tray with markers and an eraser
+    ctx.fillStyle = colors.dim; ctx.fillRect(B.x - 1.5, B.y - 1.5, B.w + 3, B.h + 3);
+    var dark = parseInt((colors.screen || '#fff').slice(1, 3), 16) < 128;     // a dark theme: the board in a dimmer room
+    ctx.fillStyle = dark ? '#cfd5dc' : '#f4f6f8'; ctx.fillRect(B.x, B.y, B.w, B.h);
+    var gl = ctx.createLinearGradient(B.x, B.y, B.x + B.w, B.y + B.h);
+    gl.addColorStop(0, 'rgba(255,255,255,0)'); gl.addColorStop(0.45, 'rgba(255,255,255,0)'); gl.addColorStop(0.52, 'rgba(190,205,222,0.4)'); gl.addColorStop(0.6, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gl; ctx.fillRect(B.x, B.y, B.w, B.h);
+    var nw = Math.min(14, SW * 0.16);
+    var ny = B.y + B.h - nw - 5;                                               // in the bottom corner, under the last line
+    ctx.fillStyle = '#f3d36b'; ctx.fillRect(B.x + B.w - nw - 3, ny, nw, nw);
+    ctx.fillStyle = '#8a6d1d'; for (var l = 1; l <= 3; l++) ctx.fillRect(B.x + B.w - nw - 1, ny + l * nw / 4.2, nw * 0.7, 0.7);
+    ctx.fillStyle = '#c8352e'; ctx.beginPath(); ctx.arc(B.x + B.w - 3 - nw / 2, ny, 1.8, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = colors.dim; ctx.fillRect(B.x - 3, B.y + B.h + 1.5, B.w + 6, 2.5);                      // the tray
+    [['#2a62c9', 0.1], ['#c8352e', 0.24], ['#1d2430', 0.38]].forEach(function (m) { ctx.fillStyle = m[0]; ctx.fillRect(B.x + B.w * m[1], B.y + B.h, Math.max(5, SW * 0.1), 1.6); });
+    ctx.fillStyle = '#4a4f57'; ctx.fillRect(B.x + B.w * 0.68, B.y + B.h - 1, Math.max(8, SW * 0.18), 2.6);    // the eraser
+    var ink = { fg: '#1d2430', b1: '#2a62c9', b2: '#c8352e' }, fs = Math.max(5.5, Math.min(8, RH * 0.6));
+    var font = 'italic ' + fs + 'px "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive';
+    ctx.save(); ctx.beginPath(); ctx.rect(B.x, B.y, B.w, B.h); ctx.clip();
+    ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     board.forEach(function (s) {
-      ctx.strokeStyle = colors[s.col]; ctx.beginPath();
-      var pen = false;
-      s.pts.forEach(function (p) { if (!p) { pen = false; return; } ctx[pen ? 'lineTo' : 'moveTo'](B.x + p[0] * B.w, B.y + p[1] * B.h); pen = true; });
-      ctx.stroke();
+      if (s.fx === undefined) return;                                         // from before scribbles moved freely
+      var ox = B.x + 3 + s.fx * Math.max(0, SW - 6 - s.w * sc), oy = B.y + 3 + s.fy * Math.max(0, B.h - 6 - RH - Math.min(14, SW * 0.16));
+      function P(p) { return [ox + p[0] * sc, oy + p[1] * sc]; }
+      ctx.strokeStyle = ctx.fillStyle = ink[s.col] || ink.fg;
+      if (s.text) {
+        ctx.save(); ctx.translate(ox + s.x * sc, oy + RH * 0.68); ctx.rotate(s.tilt);
+        ctx.font = font; ctx.fillText(s.text, 0, 0);
+        var tw = Math.min(ctx.measureText(s.text).width, SW * 0.9);
+        if (s.under) { ctx.beginPath(); ctx.moveTo(0, 2); ctx.lineTo(tw, 1.5); ctx.stroke(); }
+        if (s.ring) { ctx.beginPath(); ctx.ellipse(tw / 2, -fs * 0.32, tw / 2 + 2, fs * 0.62, 0, 0, 6.2832); ctx.stroke(); }
+        ctx.restore();
+      }
+      if (s.pts.length) {
+        ctx.beginPath(); var pen = false;
+        s.pts.forEach(function (p) { if (!p) { pen = false; return; } var q = P(p); ctx[pen ? 'lineTo' : 'moveTo'](q[0], q[1]); pen = true; });
+        ctx.stroke();
+      }
+      (s.arrows || []).forEach(function (a) {                                  // arrowheads on the fermion lines
+        var e = P([a[2], a[3]]), an = Math.atan2(a[3] - a[1], a[2] - a[0]), k = Math.max(1.6, sc * 0.035);
+        ctx.beginPath(); ctx.moveTo(e[0] - Math.cos(an - 0.5) * k, e[1] - Math.sin(an - 0.5) * k); ctx.lineTo(e[0], e[1]); ctx.lineTo(e[0] - Math.cos(an + 0.5) * k, e[1] - Math.sin(an + 0.5) * k); ctx.stroke();
+      });
+      if (s.note) { ctx.font = font; ctx.fillText(s.note, ox + sc * 0.68, oy + RH * 0.6); }
     });
+    ctx.restore(); ctx.lineCap = 'butt'; ctx.lineJoin = 'miter'; ctx.lineWidth = 1;
   }
 
   function drawAnalysis(g, dt, t) {
     var A = g.A, u = g.u;
     label('ANALYSIS · ' + (ana.ls ? 'no beam, working through the backlog' : PC.fmt(ana.rate) + ' events/s in'), A.x + 6, A.y + 12, colors.faint, 'left', 8);
-    label('whiteboard', g.board.x + g.board.w, A.y + 12, colors.faint, 'right', 8);
     drawPlot(g.scr, u);
     drawBoard(g.board);
     // the bookshelf on the left wall: journals, volume after volume
@@ -500,17 +556,7 @@ PC.Rooms = (function () {
   function rowsWithOn(g, on) { var r = []; for (var i = 0; i < g.wsRows; i++) r.push(false); Object.keys(on).forEach(function (i) { r[Math.floor(i / g.wsN)] = true; }); return r; }
   // the workstations: a desk with a monitor and a chair, for everyone without a group table
   function drawWorkstations(g, t, typing) {
-    var u = g.u, fs = Math.max(7, Math.round(5.2 * u)), running = wsOn(g);
-    // each running analysis group: its particle and a bar towards 5σ over its desks
-    g.groups.forEach(function (G) {
-      var y = Math.max(g.midY + u, wsY(g, 0) - 15 * u), w = G.x1 - G.x0, a = G.a;
-      if (!a) return;
-      ctx.fillStyle = colors.screen; ctx.fillRect(G.x0, y, w, 7 * u);
-      ctx.strokeStyle = a.sigma >= 3 ? colors.warn : colors.dim; ctx.strokeRect(Math.round(G.x0) + 0.5, Math.round(y) + 0.5, Math.round(w), Math.round(7 * u));
-      label(fit(a.sym.split(/ → | = |, /)[0] + '  ' + a.sigma.toFixed(1) + 'σ', w - 4, fs), G.x0 + w / 2, y + 5.3 * u, a.sigma >= 3 ? colors.warn : colors.fg, 'center', fs);
-      ctx.fillStyle = a.sigma >= 3 ? colors.warn : colors.b1; ctx.globalAlpha = 0.8;
-      ctx.fillRect(G.x0 + 1, y + 7 * u - 1.4 * u, (w - 2) * Math.min(1, a.sigma / 5), 1.4 * u); ctx.globalAlpha = 1;
-    });
+    var u = g.u, running = wsOn(g);
     for (var i = 0; i < g.wsN * g.wsRows; i++) {
       var x = wsX(g, i), y = wsY(g, i), on = typing['ws:' + i] || (running[i] ? 0.5 : false);   // green: in use (brighter while typed at)
       ctx.fillStyle = colors.rule; ctx.fillRect(x - g.wsW / 2, y, g.wsW, 4 * u);
@@ -670,10 +716,6 @@ PC.Rooms = (function () {
     ctx.fillStyle = colors.dim; ctx.fillRect(x0 - 1, y - 2, 2, 4);
   }
 
-  function frame(now) {
-    requestAnimationFrame(frame);
-    draw(now);
-  }
   function draw(now) {
     var dt = Math.min(0.1, (now - last) / 1000 || 0); last = now;
     if (!ana || !conf || W === 0 || cv.offsetParent === null) return;
@@ -944,7 +986,7 @@ PC.Rooms = (function () {
         if (y > g.bandY - 16 * g.u) onPick('@papers');                          // the paper station opens the Papers section
         else onPick(deskAt(e));                                                 // the rest of the analysis room, the Analyses
       });
-      requestAnimationFrame(frame);
+      PC.loop('rooms', draw);
     },
     resize: resize,
     readColors: readColors,
@@ -976,6 +1018,7 @@ PC.Rooms = (function () {
     door: function () { return door; },
     // where each paper in review is (for the debug panel and tests): [{id, where, t}]
     reviews: function () { return Object.keys(PS).map(function (id) { return { id: id, where: PS[id].where, t: PS[id].t }; }); },
-    board: function () { return board.length; }
+    board: function () { return board.length; },
+    scribble: scribble                                   // for tests: a scribble on the whiteboard
   };
 })();

@@ -85,6 +85,9 @@ if (PC.DEBUG) PC.Debug = (function () {
         btn('Builds & shutdown', 'finish') + btn('Analyses to 5σ', 'analyses') + '</div>' +
       '<div class="dbg-l">Bot</div><div class="dbg-r">' +
         btn(self.autoplay ? 'Autoplay on' : 'Autoplay off', 'auto', self.autoplay) + btn('Reset debug save', 'reset') + '</div>' +
+      (PC.errors.length ? '<div class="dbg-l dbg-err">Errors</div><div class="dbg-r dbg-err">' + PC.errors.slice(-4).map(function (x) {
+        return '<div>' + PC.esc(x.where) + ': ' + PC.esc(x.msg) + (x.n > 1 ? ' ×' + x.n : '') + '</div>';
+      }).join('') + '</div>' : '') +
       '<p class="dbg-note">Separate save slot. Game time ' + PC.dur(s.t) + '. Remove #debug from the address to play normally.</p>';
   }
 

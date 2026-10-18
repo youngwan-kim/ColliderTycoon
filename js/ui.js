@@ -43,6 +43,21 @@ PC.UI = (function () {
     $('sDisc').textContent = nd + ' / ' + PC.DISCOVERIES.length;
     $('sNobel').textContent = E.activeCount(s) + ' of ' + dv.m.slots + ' analyses running';
     $('year').textContent = E.year(s);
+    // the budget: what the world leaves of the grant, and what things cost
+    var Ec = PC.Economy, bm = dv.m.power * dv.m.budget, ci = Ec.costIndex(s, 'tech'), hard = Ec.current(s).length > 0, nMem = PC.Council.count(s, 'member') + PC.Council.count(s, 'associate');
+    $('sBudget').textContent = '×' + bm.toFixed(2);
+    $('sBudgetR').textContent = nMem + ' states · costs ×' + ci.toFixed(2) + ' · ' + Ec.mood(s);
+    var ast = s.audit ? s.audit.stage : 'sound', alarmAudit = ast === 'audit' || ast === 'frozen' || ast === 'vote';
+    if (ast !== 'sound') $('sBudgetR').textContent = auditLine(s) + ' · value ' + s.audit.V.toFixed(2);
+    $('sBudget').parentNode.classList.toggle('warn', (hard || ast === 'watch') && !alarmAudit);
+    $('sBudget').parentNode.classList.toggle('alarm', alarmAudit);
+    // the council strip on the overview (worldview.js)
+    var pa = s.parl, sh = PC.Council.shares(s), shl = Object.keys(sh).map(function (id) { return sh[id]; }).sort(function (a, b) { return b - a; });
+    PC.WorldView.set({ budget: bm, members: PC.Council.count(s, 'member') + ' member states' + (PC.Council.count(s, 'associate') ? ' · ' + PC.Council.count(s, 'associate') + ' associates' : ''),
+      shares: shl, mood: 'Europe: ' + Ec.mood(s), crisis: hard, seats: pa && pa.seats ? pa.seats : null,
+      chamber: !pa || !pa.seats ? 'no assembly yet' : PC.Parliament.elected(s.date) ? 'Parliament · ' + pa.next : 'Common Assembly',
+      bill: pa && pa.bill ? { name: pa.bill.name, left: Math.max(0, pa.bill.ends - s.t), f: PC.Parliament.projection(s), want: PC.BILLMAP[pa.bill.id].want } : null,
+      audit: s.audit && s.date >= PC.Audit.A.start ? { stage: s.audit.stage, text: auditLine(s) + ' · value ' + s.audit.V.toFixed(2) } : null });
     $('runstate').textContent = s.ls ? 'Long Shutdown ' + s.ls.n : 'Run ' + s.run;
     $('beamMode').className = 'mode' + (s.ls ? ' off' : '');
     $('beamModeText').textContent = s.ls ? 'No beam' : dv.sqrtS ? 'Stable beams' : 'Cosmics';
@@ -60,6 +75,11 @@ PC.UI = (function () {
       tEnergy: '<b>' + (dv.sqrtS ? 'Best collision energy √s = ' + PC.energy(dv.sqrtS) : 'Cosmic rays only') + '</b>' +
         (running.length ? running.map(function (x) { return esc(x.f.name); }).join(' · ') : 'No beam yet: build Linac 1.') +
         '<span class="tip-k">Field ' + (dv.m.B || 0) + ' T · mass resolution ' + (dv.m.res * 100).toFixed(1) + '%. Better tracking and a stronger field give sharper peaks.</span>',
+      tBudget: '<b>The budget: member states and the world economy</b>' + PC.Council.count(s, 'member') + ' member states and ' + PC.Council.count(s, 'associate') + ' associates pay ×' + dv.m.budget.toFixed(2) + ' of a typical lab\'s budget. ' +
+        'The electricity bill leaves ×' + dv.m.power.toFixed(2) + ' of the grant (oil $' + (s.econ ? Ec.oil(s.econ).toFixed(0) : '—') + '). ' +
+        'Construction costs ×' + Ec.costIndex(s, 'fac').toFixed(2) + ', upgrades ×' + ci.toFixed(2) + ', hiring ×' + Ec.costIndex(s, 'staff').toFixed(2) + '.' +
+        '<span class="tip-k">Audits: ' + esc(auditLine(s)) + (s.audit ? ', value for money ' + s.audit.V.toFixed(2) : '') + '.</span>' +
+        '<span class="tip-k">' + (s.econ && s.econ.eu ? 'Europe: inflation ' + s.econ.eu.pi.toFixed(1) + '% · bond yield ' + s.econ.eu.y.toFixed(1) + '% · unemployment ' + s.econ.eu.u.toFixed(1) + '% · ' + esc(Ec.mood(s)) : '') + '. Click for the World window.</span>',
       tDisc: '<b>' + E.activeCount(s) + ' of ' + dv.m.slots + ' analysis slots in use</b>' +
         (PC.DISCOVERIES.filter(function (d) { return s.disc[d.id] && s.disc[d.id].done; }).map(function (d) { return esc(d.particle); }).join(' · ') || 'Nothing observed yet.')
     };
@@ -67,34 +87,50 @@ PC.UI = (function () {
   }
 
   /* ───────── the conference archive (opened from the conference room) ───────── */
-  var selConf = null;
+  // the archive has two tabs: this generation's conferences, and those of the generations before it
+  var selConf = null, confTab = 'now', confSeen = -1;
   function ordinal(n) { var v = n % 100; return n + (v >= 11 && v <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th'); }
   function npOf(r) { return r.np !== undefined ? r.np : r.papers.length; }
   function confFates(rec) { return rec.shown.map(function (x) { return rec.gen === state.gen ? E.confFate(state, x) : x.fate || 'open'; }); }
   function renderConfs(dv) {
     var s = state, log = s.confLog || [], o = s.conf.open, ser = E.nextSeries(s);
-    if (selConf === null || selConf >= log.length) selConf = log.length - 1;
+    var gen = s.gen || 0, mine = function (r) { return (r.gen || 0) === gen; };
+    var past = log.some(function (r) { return !mine(r); });
+    if (!past) confTab = 'now';
+    var idx = log.map(function (r, i) { return i; }).filter(function (i) { return mine(log[i]) === (confTab === 'now'); });
+    // a conference just closed: show its photo
+    if (confSeen >= 0 && log.length > confSeen && mine(log[log.length - 1])) { confTab = 'now'; selConf = log.length - 1; idx = log.map(function (r, i) { return i; }).filter(function (i) { return mine(log[i]); }); }
+    confSeen = log.length;
+    if (selConf === null || idx.indexOf(selConf) < 0) selConf = idx.length ? idx[idx.length - 1] : null;
     var now = o ? '<p class="cr-now inj"><i class="led"></i>' + esc(o.name + ' ' + o.year) + ' is open · ' + PC.dur(o.remain) + ' left · the group photo is taken when it closes</p>'
       : ser ? '<p class="cr-now off"><i class="led"></i>Next: ' + esc(ser.name + ' ' + E.year(s)) + ' in ' + PC.dur(Math.max(0, s.conf.next - s.t)) + '</p>'
       : '<p class="cr-now off"><i class="led"></i>Every series has met in ' + E.year(s) + '. The next conference waits for the lab’s next year.</p>';
+    var nNow = log.filter(mine).length;
+    var tabs = past ? '<div class="seg cf-tabs" role="tablist">' +
+      '<button type="button" role="tab" data-act="conftab" data-id="now" aria-selected="' + (confTab === 'now') + '">This generation · ' + nNow + '</button>' +
+      '<button type="button" role="tab" data-act="conftab" data-id="past" aria-selected="' + (confTab === 'past') + '">Earlier generations · ' + (log.length - nNow) + '</button></div>' : '';
     var papers = 0, results = 0, firsts = 0;
-    log.forEach(function (r) { papers += r.np !== undefined ? r.np : r.papers.length; results += r.shown.length; firsts += confFates(r).filter(function (f) { return f === 'discovery'; }).length; });
-    var sum = log.length ? '<p class="muted cf-sum">' + log.length + ' conference' + (log.length > 1 ? 's' : '') + ' · ' + papers + ' papers shown · ' + results + ' results presented' +
+    idx.forEach(function (i) { var r = log[i]; papers += npOf(r); results += r.shown.length; firsts += confFates(r).filter(function (f) { return f === 'discovery'; }).length; });
+    var sum = idx.length ? '<p class="muted cf-sum">' + idx.length + ' conference' + (idx.length > 1 ? 's' : '') + ' · ' + papers + ' papers shown · ' + results + ' results presented' +
       (firsts ? ' · ' + firsts + ' later confirmed at 5σ' : '') + '</p>' : '';
-    var h = now + sum;
-    if (!log.length) h += '<p class="muted">No conferences yet. When one opens, your students, postdocs and professors go; the group photo is taken when it closes and kept here.</p>';
+    var h = now + tabs + sum;
+    if (!idx.length) h += '<p class="muted">' + (past ? 'No conferences yet this generation. ' : 'No conferences yet. ') + 'When one opens, your students, postdocs and professors go; the group photo is taken when it closes and kept here.</p>';
     else {
-      var list = log.map(function (r, i) {
-        var f = confFates(r), wd = f.filter(function (x) { return x === 'withdrawn'; }).length, ds = f.filter(function (x) { return x === 'discovery'; }).length;
-        return '<button type="button" class="cf-item' + (i === selConf ? ' sel' : '') + '" data-act="confsel" data-id="' + i + '">' +
+      var lastGen = null;
+      var list = idx.slice().reverse().map(function (i) {
+        var r = log[i], f = confFates(r), wd = f.filter(function (x) { return x === 'withdrawn'; }).length, ds = f.filter(function (x) { return x === 'discovery'; }).length;
+        var head = confTab === 'past' && r.gen !== lastGen ? '<p class="cf-gen">Generation ' + ((r.gen || 0) + 1) + '</p>' : '';
+        lastGen = r.gen;
+        return head + '<button type="button" class="cf-item' + (i === selConf ? ' sel' : '') + '" data-act="confsel" data-id="' + i + '">' +
           '<canvas class="cf-thumb" data-ph="' + i + '"></canvas><span class="cf-t"><b>' + esc(r.name) + ' ' + r.year + '</b>' +
           '<span>' + npOf(r) + ' paper' + (npOf(r) === 1 ? '' : 's') + ' · ' + r.shown.length + ' result' + (r.shown.length === 1 ? '' : 's') +
           (ds ? ' · <i class="ok">' + ds + ' ✓</i>' : '') + (wd ? ' · <i class="lost">' + wd + ' withdrawn</i>' : '') + '</span></span></button>';
-      }).reverse().join('');
+      }).join('');
       var r = log[selConf], f = confFates(r);
       var det = '<canvas class="cf-photo" data-ph="' + selConf + '" data-big="1"></canvas>' +
         '<h3 class="group-h"><span>' + esc(r.name) + ' ' + r.year + '</span><span class="val">' + ordinal(r.edition) + ' edition you attended' + (r.gen !== s.gen ? ' · generation ' + (r.gen + 1) : '') + '</span></h3>' +
         '<dl class="kv"><dt>From the lab</dt><dd>' + (r.staff.professor || 0) + ' professor' + (r.staff.professor === 1 ? '' : 's') + ', ' + (r.staff.postdoc || 0) + ' postdocs, ' + (r.staff.grad || 0) + ' students on the books</dd>' +
+        (r.speaker ? '<dt>Talk</dt><dd>' + esc(r.speaker) + '</dd>' : '') +
         '<dt>Reputation</dt><dd>+' + fmt(r.rep) + '</dd></dl>' +
         (r.shown.length ? '<h3 class="group-h"><span>Results presented</span></h3><ul class="cf-res">' + r.shown.map(function (x, i) {
           var it = x.kind === 'disc' ? PC.DISCMAP[x.id] : PC.EXCMAP[x.id];
@@ -107,7 +143,7 @@ PC.UI = (function () {
         (!r.shown.length && !r.papers.length ? '<p class="muted">Nothing of yours on the programme: you went to listen.</p>' : '');
       h += '<div class="cf-arch"><div class="cf-list">' + list + '</div><div class="cf-det">' + det + '</div></div>';
     }
-    var k = [log.length, selConf, o ? o.name + Math.round(o.remain / 5) : ser ? ser.name + Math.round((s.conf.next - s.t) / 5) : '-', firsts, $('themeBtn').textContent].join('|');
+    var k = [log.length, gen, confTab, selConf, o ? o.name + Math.round(o.remain / 5) : ser ? ser.name + Math.round((s.conf.next - s.t) / 5) : '-', firsts, $('themeBtn').textContent].join('|');
     if (keys.confBody !== k) {
       setHTML($('confBody'), k, h);
       $('confBody').querySelectorAll('canvas[data-ph]').forEach(function (cv) {
@@ -150,7 +186,7 @@ PC.UI = (function () {
         return '<span><i style="background:' + cols[i % 4] + '"></i>' + esc(x.name) + ' ' + Math.round(x.rec / tot * 100) + '%</span>';
       }).join('') + '</div>' : '') +
       '<h3 class="group-h"><span>Technology</span><span class="val">' + esc(PC.Computing.storeName()) + '</span></h3>' +
-      '<p class="muted cr-note">' + (next ? 'Next: <b>' + esc(next.name) + '</b> (' + money(next.cost) + ', ×' + next.fx.storage + ' capacity per franc). ' : 'Every storage technology is installed. ') +
+      '<p class="muted cr-note">' + (next ? 'Next: <b>' + esc(next.name) + '</b> (' + money(E.techCost(s, next)) + ', ×' + next.fx.storage + ' capacity per franc). ' : 'Every storage technology is installed. ') +
       'Data stay stored for good: publishing uses them but frees nothing. The grant keeps paying while the storage is full.</p></div>';
     var k = [Math.round(fr * 200), dv.storeFull, Math.round(left / 10), auto, s.flags.autoStore, fmt(dv.dataRate), next && next.id, tot > 0 ? dv.streams.map(function (x) { return Math.round(x.rec / tot * 100); }).join() : '',
       sizes.map(function (z) { var c = E.storeChunk(s, dv, z[0]) * price; return fmt(c) + (c > s.funds); }).join()].join('|');
@@ -195,7 +231,7 @@ PC.UI = (function () {
     } else if (pend.length) {
       h = '<h3 class="block-h"><span>Run ' + s.run + '</span><span class="val">' + pend.length + ' upgrade' + (pend.length > 1 ? 's' : '') + ' waiting</span></h3><ul class="ls-list">' +
         pend.map(function (t) { return '<li><span>' + esc(t.name) + '</span><span>' + PC.dur(t.install / dv.m.installSpeed) + '</span></li>'; }).join('') + '</ul>' +
-        '<button class="btn alarm wide" type="button" data-act="ls">Start Long Shutdown · ' + PC.dur(E.shutdownDuration(s)) + ' without beam</button>';
+        '<button class="btn alarm wide" type="button" data-act="ls">Start Long Shutdown<span class="btn-sub">' + PC.dur(E.shutdownDuration(s)) + ' without beam</span></button>';
     } else {
       h = '<h3 class="block-h"><span>Run ' + s.run + '</span><span class="val">no upgrades waiting</span></h3>' +
         '<p class="note">Detector and accelerator upgrades go in during a Long Shutdown. The beams stop and funding halves until it ends.</p>';
@@ -363,24 +399,9 @@ PC.UI = (function () {
         '<dt>Refilling</dt><dd>' + PC.BAL.fillTurn + ' s without collisions · operators refill at ' + Math.round(PC.BAL.fillAutoAt * 100) + '% of the peak</dd></dl>' +
         '<p class="muted cr-note">Refill when the curve drops to the green dashes (the fill’s average so far, counting the refill): that maximises the luminosity you collect.</p>';
     }
-    // the injection chain, as on CERN's own diagram: each machine a box, coloured by its state
-    var tot = 0; dv.facs.forEach(function (x) { if (x.f.id !== 'cosmic') tot += x.raw; });
-    function node(id) {
-      var f = PC.FAC[id], x = dv.facs.filter(function (q) { return q.f.id === id; })[0], fault = b.fault && (!b.fault.fac || b.fault.fac === id);
-      var coll = id === 'lhc' || id === 'sppbar';
-      var st = s.ls ? ['off', 'shutdown'] : fault ? ['alarm', b.fault.name.replace(/ \(.*\)/, '').toLowerCase()] : coll && b.phase === 'turn' ? ['inj', 'injecting'] : f.role === 'injector' ? ['on', 'injecting'] : x && x.raw > 0 ? ['on', 'beam on'] : ['off', 'idle'];
-      var E0 = f.beams.length ? PC.energy(x ? x.E[f.beams[0].b] : f.beams[0].E) : f.spec.split(' · ')[0];
-      var share = f.role !== 'injector' && tot > 0 && x ? x.raw / tot : null;
-      return '<div class="mnode ' + st[0] + '" title="' + esc(f.name + ' · ' + f.spec) + '"><b>' + esc(f.name.replace(/ \(.*\)/, '').replace('Super Proton Synchrotron', 'SPS').replace('Proton Synchrotron', 'PS').replace('Large Hadron Collider', 'LHC').replace('Antiproton Accumulator', 'AA')) + '</b>' +
-        '<span class="me">' + esc(E0) + '</span><span class="ms"><i class="led"></i>' + esc(st[1]) + '</span>' +
-        (share !== null ? '<span class="mshare" title="share of the collisions">' + bar(share) + '<em>' + Math.round(share * 100) + '%</em></span>' : '') + '</div>';
-    }
-    var linac = ['linac4', 'linac2', 'linac1'].filter(function (id) { return E.has(s, id); })[0];
-    var chain = [linac, 'psb', 'ps', 'sps', 'lhc'].filter(function (id) { return id && E.has(s, id); });
-    var side = ['aa', 'sppbar'].filter(function (id) { return E.has(s, id); });
-    h += '<h3 class="group-h"><span>Injection chain</span><span class="val">beam flows left to right · bars: share of the collisions</span></h3>' +
-      (chain.length ? '<div class="chain">' + chain.map(node).join('<span class="arr">→</span>') + '</div>' : '<p class="muted">No accelerator yet.</p>') +
-      (side.length ? '<div class="chain side"><span class="arr">↳</span>' + side.map(node).join('<span class="arr">→</span>') + '</div>' : '');
+    // the injection chain: a live synoptic (chainview.js), fed by feedCtrlRooms
+    h += '<h3 class="group-h"><span>Injection chain</span><span class="val">ring size ∝ circumference^0.3 · bunches move while there is beam</span></h3>' +
+      '<div class="chainv" id="chainView"></div>';
     // faults and the people who fix them
     var faults = s.log.filter(function (l) { return l.kind === 'fault' && l.gen === s.gen && /^Fault|^Recovered/.test(l.text); }).slice(0, 4);
     h += '<h3 class="group-h"><span>Faults</span><span class="val">repairs ×' + E.repairSpeed(s).toFixed(2) + ' faster</span></h3>' +
@@ -390,6 +411,40 @@ PC.UI = (function () {
       '<dt>Accelerator physicists</dt><dd>' + ap + (ap ? ' · luminosity +' + Math.round(ap * 10) + '% · faster repairs' : ' · hire them for luminosity and faster repairs') + '</dd>' +
       '<dt>Technicians</dt><dd>' + te + ' · faster repairs and shutdowns</dd></dl>';
     setHTML($('cccBody'), h, h);
+    PC.ChainView.mount($('chainView'));
+  }
+  // the machines' state for the synoptic: built or being built, in beam order
+  function chainView(dv) {
+    var s = state, b = s.beam, tot = 0;
+    dv.facs.forEach(function (x) { if (x.f.id !== 'cosmic') tot += x.raw; });
+    function present(id) { return E.has(s, id) || (s.fac[id] && !s.fac[id].built); }
+    function node(id, Egev) {
+      var f = PC.FAC[id], x = dv.facs.filter(function (q) { return q.f.id === id; })[0], fault = b.fault && (!b.fault.fac || b.fault.fac === id);
+      var coll = id === 'lhc' || id === 'sppbar', built = E.has(s, id);
+      var st = !built ? ['off', 'building ' + Math.round((1 - s.fac[id].remain / f.build) * 100) + '%'] : s.ls ? ['off', 'shutdown'] : fault ? ['alarm', b.fault.name.replace(/ \(.*\)/, '').toLowerCase()]
+        : coll && b.phase === 'turn' ? ['inj', 'injecting'] : f.role === 'injector' ? ['on', 'injecting'] : x && x.raw > 0 ? ['on', coll && b.phase === 'stable' ? 'stable beams' : 'beam on'] : ['off', 'idle'];
+      var n = { st: st[0], status: st[1], E: Egev, share: f.role !== 'injector' && built && tot > 0 && x ? x.raw / tot : null };
+      if (!built) n.building = 1 - s.fac[id].remain / f.build;
+      return n;
+    }
+    function live(id, fallback) { var x = dv.facs.filter(function (q) { return q.f.id === id; })[0]; return x && x.f.beams.length ? x.E[x.f.beams[0].b] : fallback; }
+    var linac = ['linac4', 'linac2', 'linac1'].filter(present)[0], nodes = {};
+    var chain = [linac, 'psb', 'ps', 'sps', 'lhc'].filter(function (id) { return id && present(id); });
+    if (linac) nodes[linac] = node(linac, linac === 'linac4' ? 0.16 : 0.05);
+    if (nodes[linac] && E.has(s, linac)) nodes[linac].status = linac === 'linac4' ? 'H⁻ ions' : 'protons';
+    if (present('psb')) nodes.psb = node('psb', E.has(s, 'linac4') ? 2 : E.has(s, 'lhc') ? 1.4 : 0.8);
+    if (present('ps')) nodes.ps = node('ps', live('ps', 28));
+    var ppbar = E.has(s, 'sppbar');
+    if (present('sps')) {
+      nodes.sps = ppbar ? node('sppbar', live('sppbar', 630) / 2) : node('sps', live('sps', 400));
+      if (ppbar) { var sx = dv.facs.filter(function (q) { return q.f.id === 'sps'; })[0]; if (sx && tot > 0) nodes.sps.share = (nodes.sps.share || 0) + sx.raw / tot; }
+    }
+    if (present('lhc')) nodes.lhc = node('lhc', live('lhc', 7000) / 2);
+    var aa = present('aa');
+    if (aa) nodes.aa = node('aa', 3.5);
+    var Lp = Math.exp(-b.age / PC.BAL.fillTau), lhcOn = E.has(s, 'lhc') && !s.ls && !(b.fault && (!b.fault.fac || b.fault.fac === 'lhc'));
+    return { chain: chain, aa: aa, ppbar: ppbar, nodes: nodes,
+      lhc: { fill: !lhcOn ? 0 : b.phase === 'turn' ? Math.max(0.05, 1 - b.turn / PC.BAL.fillTurn) : b.phase === 'stable' ? 1 : 0, injecting: b.phase === 'turn', stable: b.phase === 'stable', L: Lp } };
   }
   // the detector control room: health as a heatmap on the detector's own geometry, then data taking and the trigger
   function renderDCR(dv) {
@@ -450,8 +505,8 @@ PC.UI = (function () {
     // the shutdown button sits apart, so the live numbers never rebuild it under the pointer
     var pend = E.pendingTech(s), a;
     if (s.ls) a = '<p class="muted">Long Shutdown ' + s.ls.n + ' · ' + PC.dur(s.ls.remain) + ' left. The detector is being refurbished.</p>';
-    else if (pend.length) a = '<button class="btn alarm wide" type="button" data-act="ls" title="Installs the waiting upgrades and refurbishes the whole detector">Long Shutdown · ' + pend.length + ' upgrade' + (pend.length > 1 ? 's' : '') + ' · ' + PC.dur(E.shutdownDuration(s)) + '</button>';
-    else a = '<button class="btn alarm wide" type="button" data-act="maint" title="Refurbishes the whole detector; no beam meanwhile"' + (hs.some(function (x) { return x.health < 0.999; }) ? '' : ' disabled') + '>Maintenance shutdown · ' + PC.dur(E.maintDuration(s)) + '</button>';
+    else if (pend.length) a = '<button class="btn alarm wide" type="button" data-act="ls" title="Installs the waiting upgrades and refurbishes the whole detector">Long Shutdown<span class="btn-sub">' + pend.length + ' upgrade' + (pend.length > 1 ? 's' : '') + ' · ' + PC.dur(E.shutdownDuration(s)) + ' without beam</span></button>';
+    else a = '<button class="btn alarm wide" type="button" data-act="maint" title="Refurbishes the whole detector; no beam meanwhile"' + (hs.some(function (x) { return x.health < 0.999; }) ? '' : ' disabled') + '>Maintenance shutdown<span class="btn-sub">' + PC.dur(E.maintDuration(s)) + ' without beam</span></button>';
     setHTML($('dcrAct'), s.ls ? 'ls' + Math.round(s.ls.remain / 5) : a, a);
   }
   // the last 30 minutes at the detector: beam (green), faults (red), shutdown (grey), nothing (blank)
@@ -521,14 +576,24 @@ PC.UI = (function () {
     });
     var status = s.ls ? 'shutdown' : b.fault ? 'repairing' : b.phase === 'stable' ? 'fill ' + b.fill + ' · ' + Math.round(Math.exp(-b.age / PC.BAL.fillTau) * 100) + '%' :
       b.phase === 'turn' ? 'injecting' : machines.length ? 'beam on' : '';
+    PC.ChainView.set(chainView(dv));                   // the injection chain: the window's synoptic and the video wall's
+    var has = function (id) { return E.has(s, id); }, collider = has('lhc') ? 'lhc' : has('sppbar') ? 'sppbar' : null;
+    var alarms = s.log.filter(function (l) { return l.kind === 'fault' && l.gen === s.gen && /^Fault|^Recovered/.test(l.text); }).slice(0, 4).map(function (l) {
+      return { text: PC.dur(Math.max(0, s.t - l.t)).replace(/ .*/, '') + ' ' + l.text.replace(/^Fault: /, '').replace(/^Recovered from: /, '✓ ').replace(/ \(.*?\)/, ''), ok: /^Recovered/.test(l.text) };
+    });
+    var short = { tracking: 'TRACKER', calo: 'CALO', muon: 'MUON' };
     PC.CtrlRooms.set({ now: s.t,
-      acc: { on: machines.length > 0, ls: !!s.ls, fault: b.fault ? b.fault.name.replace(/ \(.*\)/, '') : null, people: 2 + PC.People.shown(s.staff.accphys, 5),
-        hist: lumiHist, machines: machines, status: status,
-        big: s.ls ? 'SHUTDOWN' : b.fault ? 'FAULT' : b.phase === 'stable' ? 'FILL ' + b.fill : b.phase === 'turn' ? 'INJECT' : 'BEAM' },
-      det: { on: !!eb.fac, ls: !!s.ls, alarm: eb.off && eb.off.fault ? 'BEAM LOST' : null, beamNow: eb.on, people: 2 + PC.People.shown(s.staff.deteng, 6), hist: lumiHist,
+      acc: { now: s.t, on: machines.length > 0, ls: !!s.ls, phase: collider ? b.phase : 'beam', fill: b.fill, turnLeft: b.turn, turnTotal: PC.BAL.fillTurn, collider: collider,
+        fault: b.fault ? { name: b.fault.name.replace(/ \(.*\)/, ''), fac: b.fault.fac } : null,
+        islands: { ps: ['linac1', 'linac2', 'linac4', 'psb', 'ps', 'aa'].some(has), sps: has('sps') || has('sppbar'), lhc: !!collider, ti: machines.length > 0 },
+        experts: PC.People.shown(s.staff.accphys, 5), hist: lumiHist, machines: machines, status: status, alarms: alarms },
+      det: { now: s.t, run: s.run, beam: eb.on, stable: !!collider && b.phase === 'stable', phase: b.phase, collider: !!collider && !!dv.collider, ls: !!s.ls,
+        lost: eb.off && eb.off.fault ? 'BEAM LOST' : null, waiting: eb.off ? eb.off.text : null, cosmics: !eb.fac,
+        experts: PC.People.shown(s.staff.deteng, 5), streams: dv.streams.map(function (x) { return { id: x.id, f: x.f }; }),
+        trigLimit: dv.trigSat > 1, storeFull: !!dv.storeFull, hist: lumiHist,
+        lanes: hs.map(function (x) { return { id: x.lane, short: short[x.lane] || x.name.toUpperCase(), health: x.health, fault: s.dfaults.some(function (f) { return f.lane === x.lane; }) }; }),
         health: { mode: dv.collider ? 'collider' : (E.has(s, 'ps') || E.has(s, 'sps')) ? 'fixed' : 'stand', health: health, lanes: lanes },
-        worst: Math.round(worst * 100), worstCol: worst < 0.6 ? 'b2' : worst < 0.85 ? 'warn' : 'dim', faults: s.dfaults.length,
-        fakes: dv.fakeRate > 0 && dv.recorded > 0 ? Math.max(1, Math.round(dv.fakeRate / dv.recorded * 100)) : 0 } });
+        worst: Math.round(worst * 100), worstCol: worst < 0.6 ? 'b2' : worst < 0.85 ? 'warn' : 'dim' } });
   }
 
   function renderOps(dv) {
@@ -739,13 +804,13 @@ PC.UI = (function () {
 
   /* ───────── launcher & windows ───────── */
   var TABS = [{ id: 'upgrades', name: 'Upgrades' }, { id: 'analyses', name: 'Analyses' }, { id: 'staff', name: 'Staff' },
-    { id: 'log', name: 'Logbook' }, { id: 'lab', name: 'Lab' }];
+    { id: 'world', name: 'World' }, { id: 'log', name: 'Logbook' }, { id: 'lab', name: 'Lab' }];
   // badges say where something needs you: a count of things to do, or a dot
   function badges(dv) {
     var s = state, b = {};
     var buy = 0;
-    PC.FACILITIES.forEach(function (f) { if (E.facStatus(s, f) === 'available' && s.funds >= f.cost) buy++; });
-    PC.TECH.forEach(function (t) { if (E.techStatus(s, t) === 'available' && s.funds >= t.cost) buy++; });
+    PC.FACILITIES.forEach(function (f) { if (E.facStatus(s, f) === 'available' && s.funds >= E.facCost(s, f)) buy++; });
+    PC.TECH.forEach(function (t) { if (E.techStatus(s, t) === 'available' && s.funds >= E.techCost(s, t)) buy++; });
     if (buy) b.upgrades = buy;
     var ready = PC.DISCOVERIES.filter(function (d) { var st = s.disc[d.id]; return !(st && (st.active || st.done)) && E.discoveryInfo(s, d, dv).eligible; }).length;
     if (ready && E.activeCount(s) < dv.m.slots) b.analyses = ready;
@@ -763,8 +828,116 @@ PC.UI = (function () {
         (v === undefined ? '' : v === '•' ? '<i class="led"></i>' : '<span class="badge">' + v + '</span>') + '</button>';
     }).join(''));
   }
+  /* ───────── the Staff window: hiring, and the people (careers.js) ───────── */
+  var staffPane = 'hire', pplAlumni = false, selPerson = null;
+  try { staffPane = localStorage.getItem('particle-clicker.staffPane') === 'people' ? 'people' : 'hire'; } catch (e) { /* private mode */ }
+  var ROLE_ORDER = { professor: 0, scientist: 1, postdoc: 2, grad: 3 };
+  function renderStaffWin() {
+    var p = state.people, n = p ? p.list.length : 0;
+    return '<div class="seg st-tabs" role="tablist">' +
+      '<button type="button" role="tab" data-act="staffpane" data-id="hire" aria-selected="' + (staffPane === 'hire') + '">Hire</button>' +
+      '<button type="button" role="tab" data-act="staffpane" data-id="people" aria-selected="' + (staffPane === 'people') + '">People · ' + n + '</button></div>' +
+      (staffPane === 'people' ? renderPeople() : renderStaff());
+  }
+  function personById(id) {
+    var p = state.people, f = function (x) { return x.id === id; };
+    return p.list.filter(f)[0] || p.wait.filter(f)[0] || p.alumni.filter(f)[0] || null;
+  }
+  function focusName(id) { var d = id && PC.DISCMAP[id]; return d ? d.particle.split(/ → | = |, /)[0] : '—'; }
+  function recordTxt(x) { return x.papers + ' paper' + (x.papers === 1 ? '' : 's') + ' · ' + x.talks + ' talk' + (x.talks === 1 ? '' : 's') + (x.disc ? ' · ' + x.disc + ' discover' + (x.disc === 1 ? 'y' : 'ies') : ''); }
+  function stageTxt(x) {
+    var s = state, C = PC.Careers, d = C.now(s);
+    if (x.dest) return x.dest === 'service' ? 'died while at the lab' : x.dest === 'retired' ? 'retired' : (x.dest === 'industry' ? 'industry' : 'academia') + ' · ' + x.where;
+    if (x.want) return 'waiting · ' + C.yrs(x.until - d);
+    if (x.end === null) return C.yrs(d - x.roleDate) + ' in post';
+    return (x.role === 'grad' ? 'PhD' : 'term ' + x.terms) + ' · ' + C.yrs(x.end - d) + ' left';
+  }
+  // a life in a line: born, age, died; the alumni of an earlier generation as they were when it ended
+  function lifeTxt(x) {
+    var s = state, C = PC.Careers;
+    if (x.born === undefined) return '';
+    var b = Math.floor(x.born);
+    if (x.died !== undefined && x.died !== null) return b + '–' + Math.floor(x.died) + ' · died aged ' + C.ageOf(s, x);
+    if (x.dest && x.gen !== s.gen) {
+      var end = s.people.genEnd && s.people.genEnd[x.gen];
+      return 'born ' + b + (end ? ' · alive at the end of generation ' + (x.gen + 1) + ', aged ' + Math.floor(end - x.born) : '');
+    }
+    return 'born ' + b + ' · aged ' + C.ageOf(s, x);
+  }
+  function renderPeople() {
+    var s = state, p = s.people, C = PC.Careers;
+    if (!p || (!p.list.length && !p.wait.length && !p.alumni.length))
+      return '<p class="muted ppl-empty">No one yet. Every graduate student, postdoc and professor you hire is a person here, with a career of their own.</p>';
+    var e = { grad: 0, postdoc: 0, professor: 0, scientist: 0 };
+    p.list.forEach(function (x) { e[x.role] += C.perf(s, x); });
+    function tile(role, k) {
+      var c = p.count[role];
+      return '<div class="tile"><span class="tk">' + k + '</span><span class="tv">' + c + '</span><span class="ts">' + (c ? 'performance ×' + (e[role] / c).toFixed(2) : '—') + '</span></div>';
+    }
+    var h = '<div class="tiles">' + tile('grad', 'PhD students') + tile('postdoc', 'Postdocs') + tile('professor', 'Professors') + tile('scientist', 'Research scientists') + '</div>';
+    var al = C.alumniMult(s);
+    function pl(n, one, many) { return '<b>' + n + '</b> ' + (n === 1 ? one : many); }
+    h += '<p class="muted ppl-flow">Stayed on: ' + pl(p.moves.postdoc, 'PhD', 'PhDs') + ' as postdocs · ' + pl(p.moves.professor, 'postdoc', 'postdocs') + ' to a chair · ' +
+      pl(p.moves.scientist, 'postdoc', 'postdocs') + ' as research scientists. Left: <b>' + p.out.industry + '</b> to industry (+' + ((al.funding - 1) * 100).toFixed(1) + '% funding), <b>' + p.out.academia +
+      '</b> to other labs (+' + ((al.rep - 1) * 100).toFixed(1) + '% reputation). ' +
+      (function () {
+        var ret = 0, rip = 0;
+        p.alumni.forEach(function (x) { if (x.died !== undefined && x.died !== null) rip++; else if (x.dest === 'retired') ret++; });
+        return ret || rip ? 'Retired: <b>' + ret + '</b> · in memoriam: <b>' + rip + '</b>. ' : '';
+      })() +
+      (pplAlumni ? '<button type="button" class="linkish" data-act="pplalumni">← back to the lab</button>'
+        : p.alumni.length ? '<button type="button" class="linkish" data-act="pplalumni">See where the alumni went →</button>' : '') + '</p>';
+    var sel = selPerson !== null ? personById(selPerson) : null;
+    var det = '<p class="muted ppl-hint">Hover over someone to see who they are; click to follow them and read their story.</p>';
+    if (sel) {
+      var alum = !!sel.dest, dead = sel.died !== undefined && sel.died !== null;
+      det = '<h3 class="group-h"><span>' + esc(sel.name) + (dead ? ' †' : '') + '</span><span class="val">' + esc(C.TITLE[sel.role]) + (alum ? (sel.dest === 'service' ? ' · in memoriam' : sel.dest === 'retired' ? ' · retired' : ' · alumnus') : '') + '</span></h3>' +
+        '<div class="ppl-det"><dl class="kv">' + (sel.born !== undefined ? '<dt>Life</dt><dd>' + esc(lifeTxt(sel)) + '</dd>' : '') +
+        (alum ? (sel.dest === 'service' ? '' : '<dt>Now</dt><dd>' + (dead ? 'in memoriam' : esc(sel.where) + (sel.dest === 'industry' ? ' (industry)' : '')) + '</dd>') +
+            '<dt>' + (sel.dest === 'service' ? 'Died' : sel.dest === 'retired' ? 'Retired' : 'Left') + '</dt><dd>' + sel.y + (sel.gen !== s.gen ? ' · generation ' + (sel.gen + 1) : '') + '</dd>' +
+            (sel.years ? '<dt>Here for</dt><dd>' + C.yrs(sel.years) + '</dd>' : '')
+          : '<dt>Here for</dt><dd>' + C.yrs(C.now(s) - sel.joined) + '</dd><dt>Stage</dt><dd>' + esc(stageTxt(sel)) + '</dd><dt>Performance</dt><dd>×' + C.perf(s, sel).toFixed(2) + '</dd>' +
+            (sel.role !== 'professor' ? '<dt>Works on</dt><dd>' + esc(focusName(sel.focus)) + '</dd>' : '') +
+            '<dt>Outlook</dt><dd>' + esc(C.outlook(s, sel)) + '</dd>') +
+        '<dt>Record</dt><dd>' + recordTxt(sel) + '</dd></dl>' +
+        '<ol class="ppl-hist">' + sel.hist.slice().reverse().map(function (q) { return '<li><span class="y">' + q[1] + '</span><span>' + esc(q[2]) + '</span></li>'; }).join('') + '</ol></div>';
+    }
+    return h + '<div class="ppl-stage" id="pplStage"></div>' + det;
+  }
+  // who walks on the floor, fed every render; their cards are written only when hovered
+  var pvFilter = null, PV_MAX = 220;
+  function feedPeopleView() {
+    var p = state.people;
+    if (!p || staffPane !== 'people' || !PC.Win.isOpen('staff')) return;
+    var alumni = pplAlumni && p.alumni.length > 0, list = [], counts = { grad: 0, postdoc: 0, professor: 0, scientist: 0, wait: p.wait.length };
+    if (alumni) {
+      counts = { industry: 0, academia: 0, retired: 0, memoriam: 0 };
+      p.alumni.forEach(function (x) {
+        var z = x.died !== undefined && x.died !== null || x.dest === 'service' ? 'memoriam' : x.dest;
+        counts[z] = (counts[z] || 0) + 1; list.push({ id: x.id, role: x.role, zone: z });
+      });
+    } else {
+      p.list.forEach(function (x) { counts[x.role]++; list.push({ id: x.id, role: x.role, zone: x.role }); });
+      p.wait.forEach(function (x) { list.push({ id: x.id, role: x.role, zone: 'wait' }); });
+    }
+    // too many for the floor: the same fair sample of every room each time (by id), and whoever is selected
+    var total = list.length;
+    if (total > PV_MAX) {
+      var keep = PV_MAX / total;
+      list = list.filter(function (x) { return x.id === selPerson || ((x.id * 2654435761) >>> 0) / 4294967296 < keep; });
+    }
+    var same = pvFilter === alumni;
+    pvFilter = alumni;
+    PC.PeopleView.set({ list: list, more: total - list.length, alumni: alumni, counts: counts, sel: selPerson, walkIn: same, walkOut: same && !alumni });
+  }
+  function personCard(id) {
+    var x = personById(id), C = PC.Careers;
+    if (!x) return null;
+    var dead = x.died !== undefined && x.died !== null;
+    return [x.name + (dead ? ' †' : ''), C.TITLE[x.role] + (x.dest ? (x.dest === 'service' ? ' · in memoriam' : x.dest === 'retired' ? ' · retired' : ' · alumnus') : ''), lifeTxt(x), stageTxt(x), recordTxt(x)].filter(function (l) { return l; });
+  }
   function renderStaff() {
-    var h = '';
+    var h = '<p class="muted st-note">Hiring funds a position; people move through it. Their careers are in People.</p>';
     PC.STAFF.forEach(function (st) {
       var s = E.staffStatus(state, st);
       if (s === 'hidden') return;
@@ -827,13 +1000,261 @@ PC.UI = (function () {
       '<p class="muted">Progress continues while you are away, for up to 12 hours.</p>';
     return h;
   }
-  var LOWER = { staff: 'wStaff', pubs: 'wPubs', log: 'wLog', lab: 'wLab' };
+  /* ───────── the World window: the economy the lab lives in ───────── */
+  // charts as inline SVG over the last 40 quarters, recessions shaded: candles (open, high, low, close), bars, lines
+  var worldBloc = 'eu', W_N = 40, worldTab = 'econ', worldSel = null;
+  function chartFrame(q, rec, inner) {
+    var n = q.length, w = 200 / Math.max(1, n), bands = '';
+    q.forEach(function (x, i) { if (rec(x)) bands += '<rect class="band" x="' + (i * w).toFixed(1) + '" y="0" width="' + (w + 0.2).toFixed(1) + '" height="50"/>'; });
+    return '<svg viewBox="0 0 200 50" preserveAspectRatio="none">' + bands + '<line class="ax" x1="0" y1="50" x2="200" y2="50"/>' + inner + '</svg>';
+  }
+  function scaler(vals, log, zero) {
+    var v = vals.filter(function (x) { return isFinite(x); }).map(function (x) { return log ? Math.log(Math.max(1e-6, x)) : x; });
+    var lo = Math.min.apply(null, v), hi = Math.max.apply(null, v);
+    if (zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+    var pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad;
+    return function (x) { var y = log ? Math.log(Math.max(1e-6, x)) : x; return (48 - (y - lo) / (hi - lo) * 46).toFixed(1); };
+  }
+  function candles(q, get, rec, log, line) {
+    var c = q.map(get), n = q.length, w = 200 / Math.max(1, n), all = [];
+    c.forEach(function (k) { all.push(k[1], k[2]); });
+    if (line) q.forEach(function (x) { all.push(line(x)); });
+    var Y = scaler(all, log), out = '';
+    c.forEach(function (k, i) {
+      var x = (i + 0.5) * w, up = k[3] >= k[0], y0 = +Y(Math.max(k[0], k[3])), y1 = +Y(Math.min(k[0], k[3]));
+      out += '<line class="wick ' + (up ? 'up' : 'dn') + '" x1="' + x.toFixed(1) + '" x2="' + x.toFixed(1) + '" y1="' + Y(k[1]) + '" y2="' + Y(k[2]) + '"/>' +
+        '<rect class="body ' + (up ? 'up' : 'dn') + '" x="' + (x - w * 0.32).toFixed(1) + '" y="' + y0.toFixed(1) + '" width="' + (w * 0.64).toFixed(1) + '" height="' + Math.max(0.6, y1 - y0).toFixed(1) + '"/>';
+    });
+    if (line) out += '<path class="ln2" d="' + q.map(function (x, i) { return (i ? 'L' : 'M') + ((i + 0.5) * w).toFixed(1) + ' ' + Y(line(x)); }).join('') + '"/>';
+    return chartFrame(q, rec, out);
+  }
+  function bars(q, get, rec, line) {
+    var n = q.length, w = 200 / Math.max(1, n), vals = q.map(get), Y = scaler(vals, false, true), z = +Y(0), out = '';
+    vals.forEach(function (v, i) {
+      var y = +Y(v);
+      out += '<rect class="bar ' + (v >= 0 ? 'up' : 'dn') + '" x="' + (i * w + w * 0.18).toFixed(1) + '" y="' + Math.min(y, z).toFixed(1) + '" width="' + (w * 0.64).toFixed(1) + '" height="' + Math.max(0.5, Math.abs(z - y)).toFixed(1) + '"/>';
+    });
+    if (line) { var L = scaler(q.map(line)); out += '<path class="ln2" d="' + q.map(function (x, i) { return (i ? 'L' : 'M') + ((i + 0.5) * w).toFixed(1) + ' ' + L(line(x)); }).join('') + '"/>'; }
+    return chartFrame(q, rec, out);
+  }
+  function lines(q, get, rec, area, color) {
+    var n = q.length, w = 200 / Math.max(1, n), vals = q.map(get), all = vals.slice();
+    if (area) q.forEach(function (x) { all.push(area(x)); });
+    var Y = scaler(all, false, true), out = '';
+    if (area) out += '<path class="area" d="M0 50' + q.map(function (x, i) { return 'L' + ((i + 0.5) * w).toFixed(1) + ' ' + Y(area(x)); }).join('') + 'L200 50Z"/>';
+    out += '<path class="ln" style="stroke:var(--' + color + ')" d="' + vals.map(function (v, i) { return (i ? 'L' : 'M') + ((i + 0.5) * w).toFixed(1) + ' ' + Y(v); }).join('') + '"/>';
+    return chartFrame(q, rec, out);
+  }
+  // the World window: the economy, or the member states
+  function renderWorld() {
+    var tabs = '<div class="seg w-tabs" role="tablist">' + [['econ', 'Economy'], ['members', 'Member states'], ['parl', 'Parliament'], ['audit', 'Audits']].map(function (t) {
+      return '<button type="button" role="tab" data-act="worldtab" data-id="' + t[0] + '" aria-selected="' + (worldTab === t[0]) + '">' + t[1] + '</button>'; }).join('') + '</div>';
+    return tabs + (worldTab === 'members' ? renderMembers() : worldTab === 'parl' ? renderParliament() : worldTab === 'audit' ? renderAudits() : renderEconomy());
+  }
+  // what a law does, in words
+  function lawFx(fx) {
+    var w = { budget: 'budget', power: 'power bill', fac: 'new machines', tech: 'upgrades', staff: 'hiring', store: 'storage', rep: 'reputation earned', accession: 'states applying' };
+    return Object.keys(fx).map(function (k) { var d = Math.round((fx[k] - 1) * 100); return w[k] + ' ' + (d >= 0 ? '+' : '−') + Math.abs(d) + '%'; }).join(' · ');
+  }
+  // the hemicycle: a dot a seat, the groups left to right
+  function hemicycle(seats, n) {
+    var G = PC.GROUPS, raw = G.map(function (g) { return seats[g.id] * n; }), cnt = raw.map(Math.floor), left = n - cnt.reduce(function (a, b) { return a + b; }, 0);
+    raw.map(function (v, i) { return [v - cnt[i], i]; }).sort(function (a, b) { return b[0] - a[0]; }).slice(0, left).forEach(function (x) { cnt[x[1]]++; });
+    var rows = 5, r0 = 42, dr = 11, pos = [], tot = 0, radii = [];
+    for (var r = 0; r < rows; r++) { radii.push(r0 + r * dr); tot += r0 + r * dr; }
+    radii.forEach(function (R, r) {
+      var k = r === rows - 1 ? n - pos.length : Math.round(n * R / tot);
+      for (var i = 0; i < k; i++) { var a = Math.PI - Math.PI * (k === 1 ? 0.5 : i / (k - 1)); pos.push({ a: a, x: 100 + Math.cos(a) * R, y: 96 - Math.sin(a) * R }); }
+    });
+    pos.sort(function (p, q) { return q.a - p.a; });
+    var out = '', j = 0;
+    G.forEach(function (g, gi) { for (var i = 0; i < cnt[gi]; i++, j++) { var q = pos[j]; if (q) out += '<circle cx="' + q.x.toFixed(1) + '" cy="' + q.y.toFixed(1) + '" r="3.6" fill="' + g.col + '"/>'; } });
+    return { svg: '<svg class="w-hemi" viewBox="0 0 200 102">' + out + '</svg>', cnt: cnt };
+  }
+  // value for money, the stage the lab is at, and the way out
+  var STAGES = [['sound', 'Sound'], ['watch', 'Under watch'], ['audit', 'Audit'], ['frozen', 'Budget frozen'], ['vote', 'Closure vote']];
+  function auditLine(s) {
+    var a = s.audit, left = a ? Math.max(0, a.until - s.t) : 0;
+    if (!a || (s.date || 1950) < PC.Audit.A.start) return 'audits begin in ' + PC.Audit.A.start;
+    return { sound: 'sound', watch: 'under watch', audit: 'audit · ' + PC.dur(left), frozen: 'budget frozen · ' + PC.dur(left), vote: 'closure vote · ' + PC.dur(left), closed: 'closed' }[a.stage];
+  }
+  function renderAudits() {
+    var s = state, Au = PC.Audit, A = Au.A, a = s.audit, y = Math.floor(s.date);
+    if (!a) return '<p class="muted">No audit yet.</p>';
+    var pt = Au.parts(s), V = a.V, lo = 0.6, hi = 1.25, X = function (v) { return ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * 100).toFixed(1) + '%'; };
+    var bad = a.stage !== 'sound';
+    var out = '<p class="w-mood' + (bad ? ' bad' : '') + (a.stage === 'audit' || a.stage === 'frozen' || a.stage === 'vote' ? ' alarm' : '') + '"><i class="led"></i><b>' + esc(auditLine(s).replace(/^./, function (c) { return c.toUpperCase(); })) + '</b><span>· value for money ' + V.toFixed(2) + '</span></p>' +
+      '<p class="muted w-note">Value for money weighs the lab\'s reputation (×' + pt.rep.toFixed(2) + ' of a typical lab of ' + y + ') against the funding it has received (×' + pt.fund.toFixed(2) + '), in orders of magnitude. A typical lab sits near 1.</p>';
+    out += '<div class="w-gauge"><span class="z red" style="width:' + X(A.recs) + '"></span><span class="z amber" style="left:' + X(A.recs) + ';width:calc(' + X(A.watch) + ' - ' + X(A.recs) + ')"></span>' +
+      '<span class="z green" style="left:' + X(A.watch) + ';right:0"></span><i style="left:' + X(V) + '"></i></div>' +
+      '<div class="w-gx"><span>' + lo + '</span><span style="left:' + X(A.recs) + '">' + A.recs + '</span><span style="left:' + X(A.audit) + '">' + A.audit + '</span><span style="left:' + X(A.watch) + '">' + A.watch + '</span><span style="left:' + X(1) + '">1</span><span class="r">' + hi + '</span></div>';
+    var cur = STAGES.map(function (x) { return x[0]; }).indexOf(a.stage);
+    out += '<ol class="w-ladder">' + STAGES.map(function (x, i) { return '<li class="' + (i === cur ? 'now' : i < cur ? 'past' : '') + '">' + x[1] + '</li>'; }).join('') + '</ol>' +
+      '<p class="muted w-note">' + (a.adverse ? 'Strikes: <b>' + a.adverse + ' of 2</b> (an adverse audit counts 1, recommendations ½). ' : '') +
+      'Under ' + A.watch + ' for a minute: watch. Under ' + A.audit + ', or ten minutes on watch: an audit (seven minutes), which comes back clean, with a budget cut, or adverse (the budget frozen). Two strikes and still under ' + A.audit + ': the council votes on closing the lab, and if more than half the budget votes yes, this generation ends with no Legacy gained.</p>';
+    if (a.stage === 'vote') {
+      var cs = Au.closeShare(s), cost = PC.Parliament.costs(s).diplomacy;
+      out += '<div class="w-bill oppose"><div class="wb-h"><b>The council votes on closing the lab</b><span>in ' + PC.dur(Math.max(0, a.until - s.t)) + '</span></div>' +
+        '<p class="wb-w">Expected: <b>' + Math.round(cs * 100) + '% of the budget for closure</b>, ' + (cs > 0.5 ? 'the lab closes' : 'the lab survives') + '.</p>' +
+        '<div class="wb-proj"><i style="width:' + ((1 - cs) * 100).toFixed(1) + '%"></i><span class="half"></span></div><div class="wb-act">' +
+        (a.vote && a.vote.pled ? '<span class="status">The director has made the case</span>' : '<button class="btn alarm" type="button" data-act="plead" data-cost="' + cost + '" data-cur="funds">Make the lab\'s case · ' + PC.money(cost) + '</button>') +
+        '<span class="muted">publishing, discoveries and open days raise the value before the vote</span></div></div>';
+    }
+    out += '<p class="w-note">The way up: <b>publish</b> (Analyses → Papers), <b>present results</b> at conferences, <b>discover</b>, and hold <b>open days</b> (World → Parliament).</p>';
+    out += '<h3 class="group-h"><span>Audit record</span><span class="val">' + a.hist.length + '</span></h3><ol class="logbook w-ep">' +
+      (a.hist.length ? a.hist.slice().reverse().slice(0, 14).map(function (h) { return '<li class="' + (/clean|sound|reprieve|thaw/.test(h.what) ? 'in' : 'out') + '"><span class="y">' + h.y + '</span><span>' + esc(h.text) + '</span></li>'; }).join('')
+        : '<li><span class="y"></span><span>No audits: the lab is good value.</span></li>') + '</ol>';
+    return out;
+  }
+  function renderParliament() {
+    var s = state, Pa = PC.Parliament, p = s.parl, y = s.date;
+    if (!p || !p.seats) return '<p class="muted">The Common Assembly first sits in ' + Pa.P.first + ', its delegates appointed by the national parliaments of the member states.</p>';
+    var el = Pa.elected(y), H = hemicycle(p.seats, Pa.P.seats), prev = p.prev ? hemicycle(p.prev, Pa.P.seats).cnt : null;
+    var out = '<p class="w-mood"><i class="led"></i><b>' + (el ? 'European Parliament' : 'Common Assembly') + '</b><span>· ' +
+      (el ? 'next election ' + p.next + (p.elections.length ? ' · turnout ' + p.elections[p.elections.length - 1].turnout + '% last time' : '') : 'delegates appointed by national parliaments; consulted only, so its laws do half as much; direct elections from ' + Pa.P.direct) + '</span></p>';
+    out += '<div class="w-parl">' + H.svg + '<ul class="w-groups">' + PC.GROUPS.map(function (g, i) {
+      var d = prev ? H.cnt[i] - prev[i] : 0;
+      return '<li><i style="background:' + g.col + '"></i><span>' + g.name + '</span><b>' + H.cnt[i] + '</b><em class="' + (d > 0 ? 'up' : d < 0 ? 'dn' : '') + '">' + (prev && d ? (d > 0 ? '+' : '−') + Math.abs(d) : '') + '</em></li>';
+    }).join('') + '</ul></div>';
+    out += '<p class="muted w-note">Public image of science: <b>' + Math.round(p.image * 100) + '%</b>, it helps every bill about research. Seats ' + (el ? 'from the last election' : 'as the national parliaments appoint them') + ', a dot each per cent.</p>';
+    // the bill on the floor
+    var C = Pa.costs(s);
+    if (p.bill) {
+      var B = PC.BILLMAP[p.bill.id], f = Pa.projection(s), left = Math.max(0, p.bill.ends - s.t);
+      out += '<div class="w-bill' + (B.want > 0 ? ' want' : ' oppose') + '"><div class="wb-h"><b>' + esc(p.bill.name) + '</b><span>vote in ' + PC.dur(left) + '</span></div>' +
+        '<p class="wb-d">' + esc(B.desc) + ' <span class="wb-fx">' + lawFx(B.fx) + ' for ' + B.yrs + ' years' + (el ? '' : ' (half, while the assembly is only consulted)') + '</span></p>' +
+        '<p class="wb-w">The lab wants it <b>' + (B.want > 0 ? 'passed' : 'rejected') + '</b>. Expected: <b>' + Math.round(f * 100) + '% for</b>, ' + (f > 0.5 ? 'passes' : 'fails') + (Math.abs(f - 0.5) < 0.06 ? ', too close to call' : '') + '.</p>' +
+        '<div class="wb-proj"><i style="width:' + (f * 100).toFixed(1) + '%"></i><span class="half"></span></div>' +
+        '<ul class="wb-groups">' + PC.GROUPS.map(function (g, i) {
+          var pf = Pa.pFor(Pa.support(s, g.id)), n = p.bill.lob[g.id] || 0;
+          return '<li><i style="background:' + g.col + '"></i><span class="gn">' + g.short + ' <em>' + H.cnt[i] + '</em></span><span class="gb"><i style="width:' + (pf * 100).toFixed(0) + '%"></i></span><span class="gp">' + Math.round(pf * 100) + '% for</span>' +
+            '<button class="btn sm" type="button" data-act="lobby" data-id="' + g.id + '" data-cost="' + C.lobby + '" data-cur="funds" title="Lobby the ' + g.name + ' (' + PC.money(C.lobby) + ')' + (n ? '; lobbied ' + n + '×, each round does less' : '') + '">Lobby' + (n ? ' ×' + n : '') + '</button></li>';
+        }).join('') + '</ul>' +
+        '<div class="wb-act">' +
+        (p.bill.testified ? '<span class="status">Testified</span>' : '<button class="btn" type="button" data-act="testify" data-cost="' + C.testify + '" data-cur="data">Testify at the hearing · ' + fmt(C.testify) + ' data</button>') +
+        '<span class="muted">Lobbying costs ' + PC.money(C.lobby) + ' a round; past ' + Pa.P.lobby.scandalAfter + ' rounds on one bill, the press may notice.</span></div></div>';
+    } else out += '<div class="w-bill idle"><p class="wb-d">No bill before the assembly now. The next is tabled within a couple of years.</p></div>';
+    // the lab's standing outreach
+    var oc = Math.max(0, (p.cool.outreach || 0) - s.t), dc = Math.max(0, (p.cool.diplomacy || 0) - s.t);
+    out += '<div class="w-acts">' +
+      (oc ? '<span class="status">Open days again in ' + PC.dur(oc) + '</span>' : '<button class="btn" type="button" data-act="outreach" data-cost="' + C.outreach + '" data-cur="funds">Open days · ' + PC.money(C.outreach) + '</button>') +
+      '<span class="muted">reputation, and the public\'s view of science</span>' +
+      (dc ? '<span class="status">Diplomacy again in ' + PC.dur(dc) + '</span>' : '<button class="btn" type="button" data-act="diplomacy" data-cost="' + C.diplomacy + '" data-cur="funds">Science diplomacy · ' + PC.money(C.diplomacy) + '</button>') +
+      '<span class="muted">speeds a state\'s accession, or invites one</span></div>';
+    // laws in force, and the record
+    out += '<h3 class="group-h"><span>Laws in force</span><span class="val">' + p.laws.length + '</span></h3><ol class="logbook w-ep">' +
+      (p.laws.length ? p.laws.map(function (l) { var B = PC.BILLMAP[l.id], good = B.want > 0; return '<li class="' + (good ? 'in' : 'out') + '"><span class="y">' + Math.floor(l.from) + '</span><span><b>' + esc(l.name) + '</b> · ' + lawFx(B.fx) + (l.k < 1 ? ' (half)' : '') + ' · ' + Math.max(0, l.until - y).toFixed(1) + ' years left</span></li>'; }).join('')
+        : '<li><span class="y"></span><span>None now.</span></li>') + '</ol>';
+    var votes = p.votes.slice().reverse().slice(0, 10);
+    if (votes.length) out += '<h3 class="group-h"><span>Votes</span><span class="val">' + p.votes.filter(function (v) { return v.pass === (v.want > 0); }).length + ' of ' + p.votes.length + ' went the lab\'s way</span></h3><ol class="logbook w-ep">' +
+      votes.map(function (v) { var good = v.pass === (v.want > 0); return '<li class="' + (good ? 'in' : 'out') + '"><span class="y">' + v.y + '</span><span><b>' + (v.pass ? 'Passed' : 'Rejected') + '</b> ' + Math.round(v.share * 100) + '% · ' + esc(v.name) + (good ? '' : ' · against the lab') + '</span></li>'; }).join('') + '</ol>';
+    return out;
+  }
+  var ST_TXT = { member: 'member state', associate: 'associate member', candidate: 'in accession talks', observer: 'observer', left: 'left the council', none: 'not a member' };
+  function renderMembers() {
+    var s = state, Co = PC.Council, c = s.council, y = s.date;
+    if (!c) return '<p class="muted">The council has not met yet.</p>';
+    var sh = Co.shares(s), bm = Co.budgetMult(s), stand = Co.standing(s), founders = PC.COUNTRIES.filter(function (k) { return c.st[k.id].founder; }).length;
+    var nm = Co.count(s, 'member'), na = Co.count(s, 'associate'), nc = Co.count(s, 'candidate');
+    var out = '<p class="w-mood"><i class="led"></i><b>' + nm + ' member state' + (nm === 1 ? '' : 's') + (na ? ' · ' + na + ' associate' + (na === 1 ? '' : 's') : '') + (nc ? ' · ' + nc + ' in talks' : '') + '</b>' +
+      '<span>· ' + (c.ratified ? 'founded ' + PC.WORLD.founded + ' by ' + founders : founders + ' founding states sign; the convention comes into force in ' + PC.WORLD.founded) + '</span></p>' +
+      '<p class="muted w-note">The budget is what the members pay, ×' + bm.toFixed(2) + ' against a typical lab of this year. The lab stands at ×' + stand.toFixed(2) + ' a typical lab\'s reputation: higher draws applicants, lower makes members restless.</p>';
+    // the cartogram: one tile per state, roughly where it is
+    var T = 30, G = 4, cols = 9, rows = 7, H0 = rows * (T + G), svg = '';
+    PC.COUNTRIES.forEach(function (k) {
+      var x = c.st[k.id], later = y < k.from, cls = later ? 'later' : x.status === 'associate' ? 'assoc' : x.status === 'candidate' ? 'cand' : x.status;
+      var px = k.c * (T + G), py = k.r === 8 ? H0 + 16 : k.r * (T + G), share = sh[k.id] ? ' · ' + (sh[k.id] * 100).toFixed(1) + '% of the budget' : '';
+      svg += '<g class="tile t-' + cls + (worldSel === k.id ? ' sel' : '') + '" data-act="country" data-id="' + k.id + '"><title>' + esc(Co.name(k.id, y)) + ': ' + (later ? 'not yet free to take part' : ST_TXT[x.status] + (x.since ? ' since ' + x.since : '')) + share + '</title>' +
+        '<rect x="' + px + '" y="' + py + '" width="' + T + '" height="' + T + '" rx="4"/><text x="' + (px + T / 2) + '" y="' + (py + T / 2 + 4) + '">' + k.id + '</text>' +
+        (x.founder ? '<circle cx="' + (px + T - 5) + '" cy="' + (py + 5) + '" r="2.2"/>' : '') + '</g>';
+    });
+    svg += '<text class="strip" x="0" y="' + (H0 + 10) + '">BEYOND EUROPE</text>';
+    out += '<div class="w-map"><svg viewBox="-2 -2 ' + (cols * (T + G) + 2) + ' ' + (H0 + 16 + T + 4) + '">' + svg + '</svg>' +
+      '<ul class="w-leg">' + [['member', 'member'], ['assoc', 'associate'], ['cand', 'in talks'], ['observer', 'observer'], ['left', 'left'], ['none', 'not a member'], ['later', 'not yet free']].map(function (l) {
+        return '<li><i class="t-' + l[0] + '"></i>' + l[1] + '</li>'; }).join('') + '<li><i class="fd"></i>founder</li></ul></div>';
+    // who pays what
+    var ids = Object.keys(sh).sort(function (a, b) { return sh[b] - sh[a]; });
+    out += '<h3 class="group-h"><span>Who pays</span><span class="val">by national income · no one above ' + Math.round(PC.WORLD.shareCap * 100) + '%</span></h3><div class="w-pay">' +
+      ids.map(function (id, i) { return '<i style="flex:' + sh[id].toFixed(4) + ';opacity:' + (1 - Math.min(0.75, i * 0.06)).toFixed(2) + '" title="' + esc(Co.name(id, y)) + ' ' + (sh[id] * 100).toFixed(1) + '%"></i>'; }).join('') +
+      '</div><div class="w-payl">' + ids.slice(0, 6).map(function (id) { return '<span><b>' + id + '</b> ' + (sh[id] * 100).toFixed(0) + '%</span>'; }).join('') + (ids.length > 6 ? '<span>+' + (ids.length - 6) + ' more</span>' : '') + '</div>';
+    // the selected state
+    if (worldSel && PC.COUNTRYMAP[worldSel]) {
+      var k = PC.COUNTRYMAP[worldSel], x = c.st[k.id], g = Co.gdp(c, k.id), hist = c.log.filter(function (l) { return l.id === k.id; });
+      out += '<h3 class="group-h"><span>' + esc(Co.name(k.id, y)) + '</span><span class="val">' + (y < k.from ? 'free to take part from ' + k.from : ST_TXT[x.status] + (x.since ? ' since ' + x.since : '')) + (x.founder ? ' · founder' : '') + '</span></h3><dl class="kv">' +
+        '<dt>Share of the budget</dt><dd>' + (sh[k.id] ? (sh[k.id] * 100).toFixed(1) + '%' + (x.status === 'associate' ? ' (an associate\'s fraction)' : '') : '—') + '</dd>' +
+        '<dt>Economy</dt><dd>' + fmt(g) + ' bn (1990 $) · ×' + (g / k.gdp).toFixed(1) + ' since 1950</dd>' +
+        '<dt>Follows the business cycle of</dt><dd>' + (k.bloc === 'eu' ? 'Europe' : 'the dollar area') + '</dd>' +
+        (k.obs ? '<dt>Role</dt><dd>observer only</dd>' : k.assoc ? '<dt>Role</dt><dd>can be an associate member</dd>' : '') + '</dl>' +
+        (hist.length ? '<ol class="logbook">' + hist.slice().reverse().map(function (l) { return '<li><span class="y">' + l.y + '</span><span>' + esc(l.text) + '</span></li>'; }).join('') + '</ol>' : '');
+    }
+    // the council's history
+    var log = c.log.slice().reverse().slice(0, 16);
+    out += '<h3 class="group-h"><span>The council\'s history</span><span class="val">click a tile for one state</span></h3><ol class="logbook w-ep">' +
+      (log.length ? log.map(function (l) { return '<li class="' + (l.what === 'leave' || l.what === 'fail' ? 'out' : l.what === 'join' || l.what === 'found' ? 'in' : '') + '"><span class="y">' + l.y + '</span><span>' + esc(l.text) + '</span></li>'; }).join('')
+        : '<li><span class="y"></span><span>The founding states are signing the convention.</span></li>') + '</ol>';
+    return out;
+  }
+  function renderEconomy() {
+    var s = state, Ec = PC.Economy, e = s.econ;
+    if (!e || e.v !== Ec.V || e.hist.length < 2) return '<p class="muted">The economy is only beginning to move. Come back in a few months of the calendar.</p>';
+    var all = e.hist, q = all.slice(-W_N), last = q[q.length - 1], ago = q[Math.max(0, q.length - 5)], B = worldBloc, bn = Ec.P.bloc[B].name;
+    var rec = function (x) { return x[B] && x[B].r; };
+    var cur = Ec.current(s);
+    function moodOf(id) {
+      var c = cur.filter(function (x) { return x.where === id || !x.where; }).map(function (x) { return x.kind.toLowerCase(); }), b = e[id];
+      return c.length ? c.join(' · ') : b.x > 1.5 ? 'boom' : b.x < -1.5 ? 'slowdown' : 'steady growth';
+    }
+    var out = '<div class="w-top"><p class="w-mood' + (cur.length ? ' bad' : '') + '"><i class="led"></i><b>Europe: ' + esc(moodOf('eu')) + '</b><span>· Dollar area: ' + esc(moodOf('us')) + '</span></p>' +
+      '<div class="seg" role="tablist">' + ['eu', 'us'].map(function (id) { return '<button type="button" role="tab" data-act="econbloc" data-id="' + id + '" aria-selected="' + (B === id) + '">' + Ec.P.bloc[id].name + '</button>'; }).join('') + '</div></div>' +
+      '<p class="muted w-note">Quarterly candles over the last ten years (green: up in the quarter, red: down); shaded: ' + esc(bn) + ' in recession.</p><div class="w-grid">';
+    function delta(now, then, pct, inv) {
+      var d = now - then, rel = pct ? d / Math.max(1e-6, Math.abs(then)) : d, dir = Math.abs(rel) < (pct ? 0.02 : 0.15) ? '' : (rel > 0) !== !!inv ? 'up' : 'down';
+      return '<span class="wd ' + dir + '">' + (d >= 0 ? '+' : '−') + (pct ? Math.abs(rel * 100).toFixed(0) + '%' : Math.abs(d).toFixed(1)) + ' in a year</span>';
+    }
+    function card(name, unit, val, dl, svg, legend) {
+      return '<div class="w-card"><div class="wk"><span>' + name + '</span><span>' + unit + '</span></div><span class="wv">' + val + '</span>' + dl + svg +
+        '<div class="wx"><span>' + Math.floor(q[0].t) + '</span>' + (legend ? '<span class="wl">' + legend + '</span>' : '') + '<span>' + Math.floor(last.t) + '</span></div></div>';
+    }
+    var b = last[B], b0 = ago[B];
+    out += card('Oil', '$ a barrel', '$' + last.oil[3].toFixed(0), delta(last.oil[3], ago.oil[3], true), candles(q, function (x) { return x.oil; }, rec, true));
+    out += card('Exchange rate', '$ per €' + (last.t < 1999 ? ' (basket before the euro)' : ''), last.fx[3].toFixed(2), delta(last.fx[3], ago.fx[3], true, true), candles(q, function (x) { return x.fx; }, rec, false));
+    out += card('Stocks · ' + bn, 'index, log scale', fmt(b.s[3]), delta(b.s[3], b0.s[3], true, true), candles(q, function (x) { return x[B].s; }, rec, true));
+    out += card('Bond yield · ' + bn, '10 years, %', b.y[3].toFixed(1) + '%', delta(b.y[3], b0.y[3], false), candles(q, function (x) { return x[B].y; }, rec, false, function (x) { return x[B].i; }), '<i class="k2"></i>policy rate');
+    out += card('Inflation · ' + bn, 'a year, %', b.p[3].toFixed(1) + '%', delta(b.p[3], b0.p[3], false), candles(q, function (x) { return x[B].p; }, rec, false));
+    out += card('GDP · ' + bn, 'growth over a year, %', (b.g >= 0 ? '+' : '') + b.g.toFixed(1) + '%', '<span class="wd">unemployment ' + b.u.toFixed(1) + '%</span>', bars(q, function (x) { return x[B].g; }, rec, function (x) { return x[B].u; }), '<i class="k2"></i>unemployment');
+    out += card('Public debt · ' + bn, '% of GDP', b.d.toFixed(0) + '%', '<span class="wd">' + (b.q > 0.5 ? b.q.toFixed(0) + '% held by the central bank' : 'held by banks and investors') + '</span>', lines(q, function (x) { return x[B].d; }, rec, q.some(function (x) { return x[B].q > 0.5; }) ? function (x) { return x[B].q; } : null, 'fg'), b.q > 0.5 || q.some(function (x) { return x[B].q > 0.5; }) ? '<i class="k3"></i>central bank (QE)' : '');
+    out += card('Banks · ' + bn, 'stress, 0–100', Math.round(b.st * 100) + '', '<span class="wd">' + (b.st > 0.5 ? 'credit is scarce' : b.st > 0.15 ? 'lending carefully' : 'lending freely') + '</span>', lines(q, function (x) { return x[B].st * 100; }, rec, null, 'b2'));
+    out += '</div>';
+    // what it does to the lab
+    function x(v) { var c = v > 1.005 ? 'up' : v < 0.995 ? 'down' : ''; return '<span class="' + c + '">×' + v.toFixed(2) + '</span>'; }
+    var share = Ec.powerShare(s), pm = Ec.powerMult(s);
+    out += '<h3 class="group-h"><span>What it does to the lab</span><span class="val">priced in Europe; oil in euros</span></h3><dl class="kv w-fx">' +
+      '<dt>Construction (new machines)</dt><dd>' + x(Ec.costIndex(s, 'fac')) + '</dd>' +
+      '<dt>Upgrades</dt><dd>' + x(Ec.costIndex(s, 'tech')) + '</dd>' +
+      '<dt>Hiring</dt><dd>' + x(Ec.costIndex(s, 'staff')) + '</dd>' +
+      '<dt>Storage</dt><dd>' + x(Ec.costIndex(s, 'store')) + '</dd>' +
+      '<dt>Electricity: ' + Math.round(share * 100) + '% of the budget at normal prices</dt><dd><span class="' + (pm < 0.995 ? 'up' : pm > 1.005 ? 'down' : '') + '">' + (pm >= 1 ? '+' : '−') + Math.abs((pm - 1) * 100).toFixed(1) + '% budget</span></dd>' +
+      '<dt>Alumni in industry: market sentiment</dt><dd>' + x(Ec.stockMult(s)) + '</dd></dl>';
+    // the episodes
+    var eps = e.ep.slice().reverse().slice(0, 14);
+    out += '<h3 class="group-h"><span>Episodes</span><span class="val">' + e.ep.length + ' since ' + Math.floor(all[0].t) + '</span></h3><ol class="logbook w-ep">' +
+      (eps.length ? eps.map(function (x) {
+        return '<li class="' + (x.to === null ? 'now' : '') + '"><span class="y">' + Math.floor(x.from) + (x.to !== null && Math.floor(x.to) !== Math.floor(x.from) ? '–' + String(Math.floor(x.to)).slice(2) : '') + '</span><span><b>' + esc(Ec.where(x) + x.kind) + '</b> · ' + esc(x.text) + (x.to === null ? ' · now' : '') + '</span></li>';
+      }).join('') : '<li><span class="y"></span><span>Nothing yet: calm markets.</span></li>') + '</ol>';
+    return out;
+  }
+  var LOWER = { staff: 'wStaff', pubs: 'wPubs', log: 'wLog', lab: 'wLab', world: 'wWorld' };
   function lowerKey(w, dv) {
     var s = state, k = w + '|' + confirmKey + '|';
-    if (w === 'staff') PC.STAFF.forEach(function (st) { k += E.staffStatus(s, st)[0] + (s.staff[st.id] || 0) + ','; });
+    if (w === 'staff') {
+      k += staffPane + '|';
+      if (staffPane === 'hire') PC.STAFF.forEach(function (st) { k += E.staffStatus(s, st)[0] + (s.staff[st.id] || 0) + ','; });
+      else { var p = s.people; k += pplAlumni + '|' + selPerson + (p ? p.list.length + ':' + p.wait.length + ':' + p.alumni.length + ':' + p.next : '') + ':' + Math.floor(s.t / 5); }
+    }
     else if (w === 'pubs') k += E.measurements(s).length + (dv.m.autoPublish ? 'A' : '') + s.flags.autoPub + '|' +
       s.papers.map(function (p) { return p.id + p.stage + p.round + p.revisions; }).join() + '|' + E.paperSlots(s) + JSON.stringify(E.reviewOdds(s));
     else if (w === 'log') k += s.log.length + ':' + (s.log[0] && s.log[0].t);
+    else if (w === 'world') k += (worldTab === 'audit' && s.audit ? JSON.stringify([s.audit.stage, Math.round(s.audit.V * 100), Math.floor(Math.max(0, s.audit.until - s.t)), s.audit.hist.length, s.audit.adverse, s.audit.vote, Math.floor(s.date)]) : '') + (worldTab === 'parl' && s.parl ? JSON.stringify([s.parl.bill && [s.parl.bill.id, Math.floor(s.parl.bill.ends - s.t), s.parl.bill.lob, s.parl.bill.testified], s.parl.laws.length, s.parl.votes.length, s.parl.elections.length, Math.round(s.parl.image * 100), Math.floor(Math.max(0, (s.parl.cool.outreach || 0) - s.t)), Math.floor(Math.max(0, (s.parl.cool.diplomacy || 0) - s.t)), !!s.parl.seats, Math.floor(s.date)]) : '') + worldTab + worldSel + (s.council ? s.council.log.length + ':' + s.council.n % 12 : '') + worldBloc + (s.econ ? s.econ.hist.length + ':' + (s.econ.hist.length && s.econ.hist[s.econ.hist.length - 1].t) + ':' + s.econ.ep.length + ':' + s.econ.n % 3 : '-');
     else k += E.canPrestige(s) + Math.floor(s.t / 60) + s.legacy;
     return k;
   }
@@ -844,7 +1265,8 @@ PC.UI = (function () {
       if (keys[LOWER[w]] === k) return;
       keys[LOWER[w]] = k;
       var io = $('ioBox') ? $('ioBox').value : '';
-      body.innerHTML = w === 'staff' ? renderStaff() : w === 'pubs' ? renderPubs(dv) : w === 'log' ? renderLog() : renderLab();
+      body.innerHTML = w === 'staff' ? renderStaffWin() : w === 'pubs' ? renderPubs(dv) : w === 'log' ? renderLog() : w === 'world' ? renderWorld() : renderLab();
+      if (w === 'staff' && $('pplStage')) PC.PeopleView.mount($('pplStage'));   // the walkers' canvas, kept across re-renders
       if ($('ioBox')) $('ioBox').value = io;
     });
     var ms = null;
@@ -867,7 +1289,7 @@ PC.UI = (function () {
     });
   }
   function patchButtons() {
-    document.querySelectorAll('#wStaff [data-cost], #lsPanel [data-cost], #lsChip [data-cost]').forEach(function (b) {
+    document.querySelectorAll('#wStaff [data-cost], #lsPanel [data-cost], #lsChip [data-cost], #wWorld [data-cost]').forEach(function (b) {
       var cur = b.getAttribute('data-cur') === 'data' ? state.data : state.funds;
       b.disabled = cur < +b.getAttribute('data-cost');
     });
@@ -891,18 +1313,22 @@ PC.UI = (function () {
       return '<li class="' + l.s + '">' + esc(l.name) + (l.s === 'planned' ? ' <span>awaiting shutdown</span>' : l.s === 'work' ? ' <span>installing ' + Math.round(l.p * 100) + '%</span>' : '') + '</li>';
     }).join('') + '<li class="note">' + esc(PC.Display.note()) + '</li>');
     var ev = PC.Display.current();
-    $('evInfo').innerHTML = ev ? esc(ev.label) + (ev.signal ? ' · <b>signal candidate: ' + esc(PC.DISCMAP[ev.signal].name) + '</b>' : '') : '&nbsp;';
+    // the event, in the colour of the trigger stream that kept it (its block in the trigger compartment has the same)
+    $('evInfo').innerHTML = ev ? '<span style="color:' + PC.TrigView.colorOf(ev) + '">' + esc(ev.label) + '</span>' + (ev.signal ? ' · <b>signal candidate: ' + esc(PC.DISCMAP[ev.signal].name) + '</b>' : '') : '&nbsp;';
 
     var ctech = {};
     PC.TECH.forEach(function (t) { if (t.lane === 'computing' && inst[t.id]) ctech[t.id] = true; });
     PC.Computing.set({ tech: ctech, rate: dv.recorded, util: dv.compSat, ls: !!s.ls, staff: s.staff,
       store: { used: s.store.used, cap: s.store.cap, full: dv.storeFull, level: storeLevel(inst), start: PC.BAL.storeStart, write: dv.dataRate },
       streams: (function () { var tot = 0; dv.streams.forEach(function (x) { tot += x.rec; }); return tot > 0 ? dv.streams.map(function (x) { return { sym: x.sym, share: x.rec / tot }; }) : null; })() });
+    var eb0 = expBeam(dv);
+    PC.TrigView.set({ now: s.t, run: s.run, rate: s.ls ? 0 : dv.recorded, input: s.ls ? 0 : dv.totalRaw, dead: E.deadTime(s, dv), trigLimit: dv.trigSat > 1 && !s.ls, ls: !!s.ls,
+      off: eb0.off ? eb0.off.text : null, fault: !!(eb0.off && eb0.off.fault), streams: dv.streams.map(function (x) { return { id: x.id, sym: x.sym, f: x.f }; }), lumi: s.lumi || null });
     PC.Overview.set({ rate: dv.recorded, data: dv.dataRate, people: PC.People.shown(s.staff.grad, 6) + PC.People.shown(s.staff.postdoc, 4) + PC.People.shown(s.staff.professor, 2), profs: PC.People.shown(s.staff.professor, 2), sat: dv.compSat > 1 && !s.ls, trigLimit: dv.trigSat > 1 && !s.ls, ls: !!s.ls,
-      streams: dv.streams.length > 1 ? dv.streams.map(function (x) { return { sym: x.sym, f: x.f }; }) : null });
+      streams: dv.streams.map(function (x) { return { id: x.id, sym: x.sym, f: x.f, rec: s.ls ? 0 : x.rec + (x.fake || 0) }; }) });
     $('compSite').textContent = PC.Computing.name();
-    if (PC.Win.isOpen('storage')) renderStore(dv);
-    if (PC.Win.isOpen('confs')) renderConfs(dv);
+    if (PC.Win.isOpen('storage')) PC.guard('ui.storage', function () { renderStore(dv); });
+    if (PC.Win.isOpen('confs')) PC.guard('ui.confs', function () { renderConfs(dv); });
     var trig = PC.TECH.filter(function (t) { return t.lane === 'trigger' && inst[t.id]; }).pop();
     var sw = ['cernlib', 'www', 'root', 'geant4', 'ml'].filter(function (id) { return ctech[id]; }).map(function (id) { return PC.TECHMAP[id].name; });
     var ch = '<li class="on">' + esc(PC.Computing.name()) + '</li>' +
@@ -958,7 +1384,7 @@ PC.UI = (function () {
     }
     if (!r || !PC.FAC[r.id]) { el.hidden = true; return; }
     var f = PC.FAC[r.id], st = E.facStatus(state, f);
-    var stt = { owned: 'Running', building: 'Under construction', available: 'Can be built · ' + money(f.cost), locked: 'Not yet available', hidden: 'Not yet available' }[st] || st;
+    var stt = { owned: 'Running', building: 'Under construction', available: 'Can be built · ' + money(E.facCost(state, f)), locked: 'Not yet available', hidden: 'Not yet available' }[st] || st;
     el.innerHTML = '<b>' + esc(f.name) + '</b><span class="tip-y">' + f.year + ' · ' + esc(f.spec) + '</span>' +
       '<span>' + esc(f.desc) + '</span><span class="tip-k">' + esc(stt) + ' · click to open in Upgrades</span>';
     el.hidden = false;
@@ -969,22 +1395,14 @@ PC.UI = (function () {
   }
 
   /* ───────── public ───────── */
+  // each step guarded: one that throws is reported and the rest still draw
+  var STEPS = [['stats', renderStats], ['chain', renderChain], ['ls', renderLS], ['ops', renderOps], ['ctrlrooms', renderControlRooms],
+    ['analyses', renderAnalyses], ['analyses.patch', patchAnalyses], ['tabs', renderTabs], ['windows', renderLower], ['buttons', patchButtons],
+    ['views', feedViews], ['people', feedPeopleView], ['tree', function () { PC.Tree.update(state); }],
+    ['plot', function (dv) { var now = performance.now(); if (now - plotT > 500) { plotT = now; drawPlot(dv); } }]];
   function render() {
     var dv = E.derive(state);
-    renderStats(dv);
-    renderChain(dv);
-    renderLS(dv);
-    renderOps(dv);
-    renderControlRooms(dv);
-    renderAnalyses(dv);
-    patchAnalyses(dv);
-    renderTabs(dv);
-    renderLower(dv);
-    patchButtons();
-    feedViews(dv);
-    PC.Tree.update(state);
-    var now = performance.now();
-    if (now - plotT > 500) { plotT = now; drawPlot(dv); }
+    STEPS.forEach(function (st) { PC.guard('ui.' + st[0], function () { st[1](dv); }); });
   }
 
   function toast(title, sub, kind) {
@@ -1025,6 +1443,18 @@ PC.UI = (function () {
     else if (act === 'pubsopen') { setPane('papers'); PC.Win.open('analyses'); }
     else if (act === 'anapane') setPane(id);
     else if (act === 'confsel') selConf = +id;
+    else if (act === 'conftab') { confTab = id === 'past' ? 'past' : 'now'; selConf = null; }
+    else if (act === 'econbloc') { worldBloc = id === 'us' ? 'us' : 'eu'; }
+    else if (act === 'worldtab') { worldTab = id === 'members' || id === 'parl' || id === 'audit' ? id : 'econ'; }
+    else if (act === 'plead') PC.Audit.plead(s);
+    else if (act === 'lobby') { var lr = PC.Parliament.lobby(s, id, []); if (lr === 'scandal') toast('Lobbying scandal', 'The press digs into the lab’s spending. Reputation and public image suffer, and the lobbying is mostly undone.', 'alarm'); }
+    else if (act === 'testify') PC.Parliament.testify(s);
+    else if (act === 'outreach') PC.Parliament.outreach(s);
+    else if (act === 'diplomacy') PC.Parliament.diplomacy(s, []);
+    else if (act === 'country') { worldSel = worldSel === id ? null : id; }
+    else if (act === 'staffpane') { staffPane = id === 'people' ? 'people' : 'hire'; try { localStorage.setItem('particle-clicker.staffPane', staffPane); } catch (e) { /* private mode */ } }
+    else if (act === 'pplalumni') { pplAlumni = !pplAlumni; selPerson = null; }
+    else if (act === 'person') selPerson = +id;
     else if (act === 'cccopen') PC.Win.open('ccc');
     else if (act === 'maint') E.startShutdown(s, true);
     else if (act === 'prestige') { if (confirmKey !== 'prestige') armConfirm('prestige'); else { confirmKey = null; hooks.prestige(); } }
@@ -1039,6 +1469,7 @@ PC.UI = (function () {
     init: function (s, h) {
       state = s; hooks = h;
       ['tabs', 'windows', 'lsChip', 'beamOps', 'confBox'].forEach(function (id) { $(id).addEventListener('click', onAction); });
+      document.querySelector('#stats [data-open]').addEventListener('click', function () { PC.Win.open('world'); render(); });
       $('toasts').addEventListener('click', function (e) {
         var x = e.target.closest('.tx');
         if (x) { x.parentNode.remove(); return; }                       // ✕ dismisses; anywhere else opens the logbook
@@ -1057,6 +1488,7 @@ PC.UI = (function () {
         try { localStorage.setItem('particle-clicker.hideDone', hd.checked ? '1' : '0'); } catch (e) { /* private mode */ }
         render();
       });
+      PC.PeopleView.hooks(function (id) { selPerson = id === selPerson ? null : id; keys.wStaff = null; render(); }, personCard);
       PC.Win.init(function (id, open) {
         if (id === 'analyses' && open) PC.Plot.resize();
         if (id === 'upgrades' && open && arguments[2] !== 'resize') PC.Tree.reset();   // scroll to the frontier

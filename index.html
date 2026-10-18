@@ -20,6 +20,7 @@
       <div tabindex="0"><dt>Funding</dt><dd id="sFunds">0</dd><dd class="rate" id="sFundsR">0/s</dd><div class="rd-tip" id="tFunds"></div></div>
       <div tabindex="0"><dt>Reputation</dt><dd id="sRep">0</dd><dd class="rate" id="sRepR">funding ×1</dd><div class="rd-tip" id="tRep"></div></div>
       <div tabindex="0"><dt>Collision energy</dt><dd id="sEnergy">—</dd><dd class="rate" id="sMachines">B = 0 T</dd><div class="rd-tip" id="tEnergy"></div></div>
+      <div tabindex="0" class="rd-world" data-open="world"><dt>Budget</dt><dd id="sBudget">×1.00</dd><dd class="rate" id="sBudgetR">steady growth</dd><div class="rd-tip" id="tBudget"></div></div>
       <div tabindex="0"><dt>Discoveries</dt><dd id="sDisc">0</dd><dd class="rate" id="sNobel">1 analysis slot</dd><div class="rd-tip" id="tDisc"></div></div>
     </dl>
     <button class="theme" id="themeBtn" type="button" aria-label="Switch light or dark console">Light</button>
@@ -34,19 +35,18 @@
         <section class="beam-ops" id="beamOps" aria-label="Beam operations">
           <div class="bo-h" id="boHead"></div>
           <canvas class="ctrl-room" id="ctrlCCC" aria-label="The accelerator control room. Click to open it."></canvas>
+          <canvas class="council-strip" id="councilStrip" aria-label="The council and the parliament: the budget, the bill on the floor, the audits. Click for the World window."></canvas>
         </section>
         <div class="card ring-card" id="ringCard" hidden></div>
       </figure>
       <figure class="ov-cell ov-det" tabindex="0">
         <div class="lens" id="detectorWrap">
           <canvas id="display" aria-label="Detector and event display. Click to record events."></canvas>
-          <span class="hint" id="detHint">Click to record events</span>
+          <div class="lens-tag"><span class="lt-row"><b id="detLabel">Cosmic-ray test stand</b><button class="info-btn i-only" type="button" data-pop="detPop" aria-expanded="false" aria-label="Detector subsystems" title="Subsystems">ⓘ</button></span><span id="detSite">surface hall</span></div>
+          <p class="ev-info lens-ev" id="evInfo"></p>
         </div>
+        <div class="trig-box"><canvas id="trigView" aria-label="The trigger: events kept, the event stream and the run's luminosity. Click for the trigger menu."></canvas></div>
         <div class="pop" id="detPop" role="dialog" aria-label="Detector subsystems"><b>Subsystems</b><button class="pop-x" type="button" data-pop="detPop" aria-label="Close">✕</button><ul class="legend" id="detLegend"></ul></div>
-        <div class="card" id="cardDet">
-          <b id="detLabel">Cosmic-ray test stand</b><button class="info-btn" type="button" data-pop="detPop" aria-expanded="false">ⓘ subsystems</button><span class="tip-y" id="detSite">surface hall</span>
-          <p class="ev-info" id="evInfo"></p>
-        </div>
       </figure>
       <figure class="ov-cell ov-comp" tabindex="0">
         <canvas class="ctrl-room" id="ctrlDCR" aria-label="The detector control room. Click to open it."></canvas>
@@ -106,6 +106,10 @@
       <header class="win-h"><span>Staff</span><span class="win-sub">shift-click hires 10</span><button class="win-x" type="button" aria-label="Close">✕</button></header>
       <div class="win-b" id="wStaff"></div>
     </section>
+    <section class="win" data-win="world" aria-label="World" hidden>
+      <header class="win-h"><span>World</span><span class="win-sub" id="worldSub">economy · member states · parliament · audits</span><button class="win-x" type="button" aria-label="Close">✕</button></header>
+      <div class="win-b" id="wWorld"></div>
+    </section>
     <section class="win" data-win="log" aria-label="Logbook" hidden>
       <header class="win-h"><span>Logbook</span><span class="win-sub">latest first</span><button class="win-x" type="button" aria-label="Close">✕</button></header>
       <div class="win-b" id="wLog"></div>
@@ -139,9 +143,19 @@
 
   <script src="js/content.js"></script>
   <script src="js/engine.js"></script>
+  <script src="js/careers.js"></script>
+  <script src="js/worldcontent.js"></script>
+  <script src="js/economy.js"></script>
+  <script src="js/council.js"></script>
+  <script src="js/parliament.js"></script>
+  <script src="js/audit.js"></script>
   <script src="js/util.js"></script>
   <script src="js/shell.js"></script>
   <script src="js/people.js"></script>
+  <script src="js/peopleview.js"></script>
+  <script src="js/chainview.js"></script>
+  <script src="js/trigview.js"></script>
+  <script src="js/worldview.js"></script>
   <script src="js/windows.js"></script>
   <script src="js/physics.js"></script>
   <script src="js/display.js"></script>

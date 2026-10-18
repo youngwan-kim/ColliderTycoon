@@ -115,7 +115,7 @@ PC.Tree = (function () {
     h += '</svg>';
     nodes.forEach(function (n) {
       if (!n.vis) return;
-      var s = st[n.id], cost = n.it.cost;
+      var s = st[n.id], cost = costOf(n);
       var tag = s === 'owned' ? (n.kind === 'fac' ? 'running' : 'installed') : s === 'pending' ? 'awaiting LS' : s === 'building' ? 'building' : PC.money(cost);
       h += '<button type="button" class="tnode s-' + s + (selected === n.id ? ' sel' : '') + '" data-node="' + n.id + '" data-cost="' + cost + '" style="left:' + n.x + 'px;top:' + n.y + 'px">' +
         '<i class="led"></i><span class="tn">' + esc(n.it.name) + '</span><span class="tc">' + tag + '</span></button>';
@@ -139,7 +139,7 @@ PC.Tree = (function () {
     var n = byId[selected];
     if (!n) {
       detail.innerHTML = '<p class="muted">Select a node to see what it does, what it needs and what it unlocks. ' +
-        'Blue nodes can be bought now; dashed ones are further away.</p>';
+        'Blue nodes can be bought now (double-click one to buy it); dashed ones are further away.</p>';
       return;
     }
     var it = n.it, s = st[n.id];
@@ -152,8 +152,8 @@ PC.Tree = (function () {
       return d.needs.some(function (c) { return caps.indexOf(c) >= 0; }) || (n.kind === 'fac' && Object.keys(d.via).some(function (b) { return it.beams.some(function (x) { return x.b === b && x.E >= d.via[b]; }); }));
     }).map(function (d) { return esc(d.name); });
     var act = '';
-    if (s === 'available') act = '<button type="button" class="btn" data-buy="' + n.kind + ':' + n.id + '" data-cost="' + it.cost + '">' +
-      (n.kind === 'fac' ? 'Build' : it.install ? 'Order' : 'Adopt') + ' · ' + PC.money(it.cost) + '</button>';
+    if (s === 'available') act = '<button type="button" class="btn" data-buy="' + n.kind + ':' + n.id + '" data-cost="' + costOf(n) + '">' +
+      (n.kind === 'fac' ? 'Build' : it.install ? 'Order' : 'Adopt') + ' · ' + PC.money(costOf(n)) + '</button><span class="dt-tip">or double-click the node</span>';
     else act = '<span class="status">' + ({ owned: n.kind === 'fac' ? 'Running' : 'Installed', pending: 'Awaiting Long Shutdown', building: 'Under construction', locked: 'Locked', hidden: 'Locked' }[s]) + '</span>';
     detail.innerHTML =
       '<div class="dt-h"><span class="yr">' + it.year + '</span><h3>' + esc(it.name) + '</h3></div>' +
@@ -167,8 +167,10 @@ PC.Tree = (function () {
       '<div class="dt-act">' + act + '</div>';
   }
 
+  // the price now: the list price moved by the world economy
+  function costOf(n) { return n.kind === 'fac' ? E.facCost(state, n.it) : E.techCost(state, n.it); }
   function structKey() {
-    var k = selected + '|' + hide + '|';
+    var k = selected + '|' + hide + '|' + PC.Economy.costIndex(state, 'fac').toFixed(2) + PC.Economy.costIndex(state, 'tech').toFixed(2) + '|';
     nodes.forEach(function (n) { k += status(n)[0]; });
     return k;
   }
@@ -179,6 +181,12 @@ PC.Tree = (function () {
       wrap.addEventListener('click', function (e) {
         var b = e.target.closest('[data-node]'); if (!b) return;
         selected = b.getAttribute('data-node'); key = ''; hooks.changed();
+      });
+      // double-click a node to build, order or adopt it (the same as its button in the side panel)
+      wrap.addEventListener('dblclick', function (e) {
+        var b = e.target.closest('[data-node]'), n = b && byId[b.getAttribute('data-node')];
+        if (!n || status(n) !== 'available' || state.funds < costOf(n)) return;
+        hooks.buy(n.kind, n.id);
       });
       detail.addEventListener('click', function (e) {
         var b = e.target.closest('[data-buy]'); if (!b || b.disabled) return;

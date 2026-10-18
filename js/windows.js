@@ -12,6 +12,7 @@ PC.Win = (function () {
     analyses: { x: 0.42, y: 0.12, w: 760, h: 520 },
     staff: { x: 0.06, y: 0.16, w: 640, h: 520 },
     log: { x: 0.62, y: 0.18, w: 460, h: 480 },
+    world: { x: 0.34, y: 0.1, w: 620, h: 600 },
     lab: { x: 0.30, y: 0.22, w: 560, h: 520 },
     ccc: { x: 0.04, y: 0.12, w: 620, h: 600 },      // the control rooms open from their buildings on the map
     dcr: { x: 0.30, y: 0.12, w: 600, h: 600 },

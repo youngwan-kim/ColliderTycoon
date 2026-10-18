@@ -3,7 +3,7 @@
   var E = PC.Engine, UI = PC.UI, D = PC.Display;
   // debug mode (index.html#debug) keeps its own save so normal progress is untouched
   var KEY = PC.DEBUG ? 'particle-clicker.save.debug2' : 'particle-clicker.save.v2';
-  var state, spawnAcc = 0, clicks = 0;
+  var state, spawnAcc = 0;
 
   function store(fn) { try { return fn(); } catch (e) { return null; } }
 
@@ -29,11 +29,27 @@
   }
 
   function setState(s) { state = s; UI.setState(s); }
+  // the council has voted to close the lab: the closing screen, then the next generation
+  function checkClosed() {
+    if (!state.audit || state.audit.stage !== 'closed') return;
+    var sum = E.closeSummary(state);
+    setState(E.close(state)); save();
+    var m = document.createElement('div');
+    m.className = 'modal'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-label', 'The lab is closed');
+    m.innerHTML = '<div class="modal-b"><h2>The lab is closed</h2>' +
+      '<p>In ' + sum.to + ', the council voted to close the laboratory: its reputation had fallen too far behind what it was paid.</p>' +
+      '<dl class="kv"><dt>Years</dt><dd>' + sum.from + '–' + sum.to + '</dd><dt>Discoveries</dt><dd>' + sum.disc + '</dd><dt>Conferences attended</dt><dd>' + sum.confs + '</dd>' +
+      '<dt>People who worked here</dt><dd>' + sum.people + '</dd><dt>Reputation</dt><dd>' + PC.fmt(sum.rep) + '</dd><dt>Play time</dt><dd>' + PC.dur(sum.t) + '</dd></dl>' +
+      '<p class="muted">No Legacy is gained. Legacy ' + sum.legacy + ', the conference archive and the alumni are kept. Generation ' + (sum.gen + 2) + ' begins in 1950, with new founding states.</p>' +
+      '<button class="btn" type="button">Begin again</button></div>';
+    m.querySelector('button').addEventListener('click', function () { m.remove(); });
+    document.body.appendChild(m);
+  }
 
 
 
   // away: events from a fast-forward; the passing ones (faults, conferences) are not news any more
-  var PASSING = ['fault', 'faultEnd', 'conf', 'confEnd', 'excess', 'excess3', 'paperBack', 'paperRevise', 'paperRejected', 'paperAccepted'];
+  var PASSING = ['fault', 'faultEnd', 'conf', 'confEnd', 'econ', 'parl', 'excess', 'excess3', 'paperBack', 'paperRevise', 'paperRejected', 'paperAccepted'];
   function handleEvents(ev, away) {
     if (away) ev = ev.filter(function (e) { return PASSING.indexOf(e.type) < 0; });
     ev.forEach(function (e) {
@@ -69,6 +85,25 @@
         UI.toast('Storage full', 'No new data is written and the analyses stand still. Click the storage hall under the computing centre to buy more' + (E.caps(state).autostore ? ', or turn on automatic purchases.' : '.'), 'alarm');
       } else if (e.type === 'lsdone') {
         UI.toast('Long Shutdown complete', e.items.map(function (id) { return PC.TECHMAP[id].name; }).join(', ') + ' — beams back on.');
+      } else if (e.type === 'audit') {
+        if (e.what === 'closed') return;                  // the closing screen says it
+        var at = { watch: 'Under watch', sound: 'Watch lifted', audit: 'Audit opened', clean: 'A clean audit', recs: 'Audit: recommendations', adverse: 'An adverse audit', thaw: 'The freeze ends', vote: 'A vote on closing the lab', reprieve: 'The lab is kept' }[e.what] || 'Audit';
+        UI.toast(at, e.text + '. See World → Audits.', e.kind === 'alarm' ? 'alarm' : undefined);
+      } else if (e.type === 'parl') {
+        if (e.what === 'bill') UI.toast('Before the assembly', e.text.replace(/^The assembly debates the /, '') + '. Lobby, testify, or let it run: World → Parliament.', e.want < 0 ? 'alarm' : undefined);
+        else if (e.what === 'vote') UI.toast(e.pass ? 'Law passed' : 'Bill rejected', e.text, e.good ? undefined : 'alarm');
+        else if (e.what === 'election' || e.what === 'first') UI.toast(e.what === 'first' ? 'The Common Assembly' : 'European elections', e.text + '. See World → Parliament.');
+        else if (e.what === 'scandal') UI.toast('Lobbying scandal', e.text, 'alarm');
+      } else if (e.type === 'council') {
+        if (e.what === 'apply' || e.what === 'observer' || e.what === 'fail') return;   // the logbook has those
+        UI.toast(e.what === 'leave' ? 'A member state leaves' : e.what === 'found' ? 'The lab is founded' : e.what === 'border' ? 'Borders move' : e.what === 'assoc' ? 'A new associate' : 'A new member state',
+          e.text + '. See the World window.', e.what === 'leave' ? 'alarm' : undefined);
+      } else if (e.type === 'econ') {
+        UI.toast((e.where ? e.where + ': ' : '') + e.kind, e.text.replace(/^./, function (c) { return c.toUpperCase(); }) + '. See the World window.', e.kind === 'Banking crisis' || e.kind === 'Market crash' ? 'alarm' : undefined);
+      } else if (e.type === 'death') {
+        UI.toast('In memoriam', e.name + ' (' + e.span + '), ' + (e.role === 'grad' ? 'PhD student' : PC.Careers.TITLE[e.role].toLowerCase()) + ' at the lab, died aged ' + e.age + '.');
+      } else if (e.type === 'professor') {
+        UI.toast('A new professor', e.name + ', once a postdoc here, now holds a chair in the lab.');
       }
     });
   }
@@ -97,6 +132,8 @@
     if (id === '@papers') PC.UI.showPapers(); else if (id === '@conf') { PC.Win.open('confs'); UI.render(); } else PC.UI.showAnalysis(id);
   });
   PC.CtrlRooms.init({ ccc: document.getElementById('ctrlCCC'), dcr: document.getElementById('ctrlDCR') }, function (id) { PC.Win.open(id); });
+  PC.TrigView.init(document.getElementById('trigView'), function () { PC.Win.open('analyses'); UI.render(); });
+  PC.WorldView.init(document.getElementById('councilStrip'), function () { PC.Win.open('world'); UI.render(); });   // the trigger menu is in the Analyses window
   PC.Overview.init(document.getElementById('ovLinks'), document.getElementById('overview'),
     document.getElementById('complexMap'), document.getElementById('detectorWrap'), document.querySelector('.ov-comp .lens'), document.getElementById('rooms'));
   UI.init(state, {
@@ -110,7 +147,7 @@
   });
   if (!fresh) {
     var away = (Date.now() - (state.saved || Date.now())) / 1000;
-    if (away > 5) { var r = E.simulate(state, away); handleEvents(r.events, true); awaySummary(r); }
+    if (away > 5) { var r = E.simulate(state, away); handleEvents(r.events, true); awaySummary(r); checkClosed(); }
   } else {
     UI.toast('Welcome to the lab', 'Click the test stand to record cosmic muons. Build Linac 1 in Upgrades (bottom bar) to start the accelerator chain; the tree there shows the way to a CMS-like detector.');
   }
@@ -118,6 +155,7 @@
   /* ───────── clicking ───────── */
   var wrap = document.getElementById('detectorWrap');
   wrap.addEventListener('pointerdown', function (e) {
+    if (e.target.closest('.lens-tag button')) return;      // the subsystems ⓘ, not a click on the detector
     var r = wrap.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
     var v = E.click(state);
     D.spawn();
@@ -125,7 +163,6 @@
     f.className = 'floater'; f.textContent = '+' + PC.fmt(v);
     f.style.left = (x + 8) + 'px'; f.style.top = (y - 8) + 'px';
     wrap.appendChild(f); setTimeout(function () { f.remove(); }, 1000);
-    if (++clicks === 15) document.getElementById('detHint').style.opacity = 0;
   });
 
   /* ───────── loop ───────── */
@@ -143,6 +180,7 @@
     } else {
       handleEvents(E.tick(state, gdt));
     }
+    checkClosed();
     // ambient events: more data → busier display (log scale)
     var dv = E.derive(state);
     spawnAcc += dt * (state.ls ? 0 : D.idle() ? 0.25 : Math.min(1.5, 0.2 + 0.12 * Math.log10(1 + dv.dataRate)));
@@ -172,12 +210,12 @@
   function labelTheme() { themeBtn.textContent = curTheme() === 'dark' ? 'Light' : 'Dark'; }
   var t = store(function () { return localStorage.getItem(themeKey); });
   if (t) document.documentElement.setAttribute('data-theme', t);
-  labelTheme(); D.readColors(); PC.Complex.readColors(); PC.Plot.readColors(); PC.Computing.readColors(); PC.Rooms.readColors(); PC.CtrlRooms.readColors(); PC.Overview.readColors();
+  labelTheme(); D.readColors(); PC.Complex.readColors(); PC.Plot.readColors(); PC.Computing.readColors(); PC.Rooms.readColors(); PC.CtrlRooms.readColors(); PC.Overview.readColors(); PC.PeopleView.readColors(); PC.ChainView.readColors(); PC.TrigView.readColors(); PC.WorldView.readColors();
   themeBtn.addEventListener('click', function () {
     var nx = curTheme() === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', nx);
     store(function () { localStorage.setItem(themeKey, nx); });
-    labelTheme(); D.readColors(); PC.Complex.readColors(); PC.Plot.readColors(); PC.Computing.readColors(); PC.Rooms.readColors(); PC.CtrlRooms.readColors(); PC.Overview.readColors();
+    labelTheme(); D.readColors(); PC.Complex.readColors(); PC.Plot.readColors(); PC.Computing.readColors(); PC.Rooms.readColors(); PC.CtrlRooms.readColors(); PC.Overview.readColors(); PC.PeopleView.readColors(); PC.ChainView.readColors(); PC.TrigView.readColors(); PC.WorldView.readColors();
   });
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { labelTheme(); D.readColors(); PC.Complex.readColors(); PC.Plot.readColors(); PC.Computing.readColors(); PC.Rooms.readColors(); PC.CtrlRooms.readColors(); PC.Overview.readColors(); });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { labelTheme(); D.readColors(); PC.Complex.readColors(); PC.Plot.readColors(); PC.Computing.readColors(); PC.Rooms.readColors(); PC.CtrlRooms.readColors(); PC.Overview.readColors(); PC.PeopleView.readColors(); PC.ChainView.readColors(); PC.TrigView.readColors(); PC.WorldView.readColors(); });
 })();
